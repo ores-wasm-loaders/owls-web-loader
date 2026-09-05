@@ -1,0 +1,25 @@
+{
+  "name": "@ores-wasm-loaders/owls-web-loader",
+  "version": "0.1.1",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs && tsc --emitDeclarationOnly && esbuild src/index.ts src/server.ts --bundle --format=esm --platform=browser --outdir=dist",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "esbuild": "0.25.5",
+    "typescript": "5.8.3"
+  }
+}

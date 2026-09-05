@@ -1,0 +1,5 @@
+schema = 2
+[tasks.deps]
+run = ["npm ci --ignore-scripts", "zed install --frozen --adapter node --install-mode copy"]
+[tasks.check]
+run = ["zed validate --require-lock", "npm test"]
