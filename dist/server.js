@@ -508,7 +508,14 @@ function parseRelease(input, origins) {
   const expected = r.runtime === "raw-wasm" ? "wasm" : r.runtime === "wasm-bindgen" ? "module" : "script";
   if (!e || e.kind !== expected) throw new LoaderError("entrypoint", "Entrypoint kind does not match runtime");
   Object.freeze(r.assets);
+  freezeJson(r.extensions);
   return Object.freeze(r);
+}
+function freezeJson(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
 }
 
 // src/hints.ts

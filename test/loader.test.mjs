@@ -89,4 +89,17 @@ test("Flutter view cleanup is idempotent",()=>{
   const dispose=mountFlutterView({addView:()=>7,removeView:id=>{assert.equal(id,7);removed++;}},{});
   dispose();dispose();assert.equal(removed,1);
 });
-
+test("activation deadline rejects a non-cooperative adapter without replaying it",async()=>{
+  let starts=0;const c=setup(async()=>bytes,{timeoutMs:10});
+  const adapter={activate:()=>{starts++;return new Promise(()=>{});}};
+  await assert.rejects(c.activate("demo@r1",adapter),{code:"timeout"});
+  await assert.rejects(c.activate("demo@r1",adapter),{code:"timeout"});
+  assert.equal(starts,1);
+});
+test("extension configuration is immutable and part of release identity",()=>{
+  const c=setup(async()=>bytes), r=manifest();r.release="r2";r.extensions={tenant:{theme:"blue"}};
+  const snapshot=c.register(r);r.extensions.tenant.theme="red";
+  assert.equal(snapshot.extensions.tenant.theme,"blue");
+  assert.throws(()=>c.register(r),{code:"release-conflict"});
+  assert.throws(()=>snapshot.extensions.tenant.theme="green");
+});

@@ -41,7 +41,7 @@ export class Coordinator {
   }
   register(input: unknown): Release {
     const r = parseRelease(input, this.policy.origins), key = releaseKey(r);
-    const identity = JSON.stringify({...r, extensions: undefined});
+    const identity = JSON.stringify(r);
     const old = this.manifests.get(key);
     if (old && old.identity !== identity) throw new LoaderError("release-conflict", "Release ID already identifies different assets");
     this.manifests.set(key, {release:r, identity});
@@ -113,14 +113,20 @@ export class Coordinator {
     const p = Promise.resolve().then(async () => {
       await this.preparing.get(key)?.catch(() => {});
       controller.signal.throwIfAborted();
-      const result = await adapter.activate({release:r, signal:controller.signal, bytes:id => this.bytes(r,id,controller.signal)});
+      const result = await abortable(adapter.activate({release:r, signal:controller.signal, bytes:id => this.bytes(r,id,controller.signal)}), controller.signal);
       controller.signal.throwIfAborted();
       this.emit({phase:"activated",appId:r.appId,release:r.release});
       return result;
-    }).catch(error => { this.active.delete(key); this.emit({phase:"error",appId:r.appId,release:r.release}); throw error; })
+    }).catch(error => { this.emit({phase:"error",appId:r.appId,release:r.release}); throw error; })
       .finally(() => clearTimeout(timer));
     this.active.set(key,{adapter,promise:p});
     return p;
   }
 }
-
+function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort(); else signal.addEventListener("abort", abort, {once:true});
+    work.then(resolve,reject).finally(() => signal.removeEventListener("abort",abort));
+  });
+}

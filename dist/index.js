@@ -508,6 +508,7 @@ function parseRelease(input, origins) {
   const expected = r.runtime === "raw-wasm" ? "wasm" : r.runtime === "wasm-bindgen" ? "module" : "script";
   if (!e || e.kind !== expected) throw new LoaderError("entrypoint", "Entrypoint kind does not match runtime");
   Object.freeze(r.assets);
+  freezeJson(r.extensions);
   return Object.freeze(r);
 }
 function assetKey(a) {
@@ -515,6 +516,12 @@ function assetKey(a) {
 }
 function releaseKey(r) {
   return r.appId + "@" + r.release;
+}
+function freezeJson(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
 }
 
 // src/transport.ts
@@ -624,7 +631,7 @@ var Coordinator = class {
   queue = [];
   register(input) {
     const r = parseRelease(input, this.policy.origins), key = releaseKey(r);
-    const identity = JSON.stringify({ ...r, extensions: void 0 });
+    const identity = JSON.stringify(r);
     const old = this.manifests.get(key);
     if (old && old.identity !== identity) throw new LoaderError("release-conflict", "Release ID already identifies different assets");
     this.manifests.set(key, { release: r, identity });
@@ -734,12 +741,11 @@ var Coordinator = class {
       await this.preparing.get(key)?.catch(() => {
       });
       controller.signal.throwIfAborted();
-      const result = await adapter.activate({ release: r, signal: controller.signal, bytes: (id) => this.bytes(r, id, controller.signal) });
+      const result = await abortable(adapter.activate({ release: r, signal: controller.signal, bytes: (id) => this.bytes(r, id, controller.signal) }), controller.signal);
       controller.signal.throwIfAborted();
       this.emit({ phase: "activated", appId: r.appId, release: r.release });
       return result;
     }).catch((error) => {
-      this.active.delete(key);
       this.emit({ phase: "error", appId: r.appId, release: r.release });
       throw error;
     }).finally(() => clearTimeout(timer));
@@ -747,6 +753,14 @@ var Coordinator = class {
     return p;
   }
 };
+function abortable(work, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 // src/adapters.ts
 var RawWasmAdapter = class {
@@ -1029,6 +1043,7 @@ export {
   assetKey,
   browserPolicy,
   createWebViewBridge,
+  freezeJson,
   hintDescriptors,
   httpTransport,
   mountFlutterView,

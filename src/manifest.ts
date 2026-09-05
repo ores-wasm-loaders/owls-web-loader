@@ -25,7 +25,14 @@ export function parseRelease(input: unknown, origins: readonly string[]): Releas
   const expected = r.runtime === "raw-wasm" ? "wasm" : r.runtime === "wasm-bindgen" ? "module" : "script";
   if (!e || e.kind !== expected) throw new LoaderError("entrypoint", "Entrypoint kind does not match runtime");
   Object.freeze(r.assets);
+  freezeJson(r.extensions);
   return Object.freeze(r);
 }
 export function assetKey(a: Asset): string { return a.url + "#" + a.sha256; }
 export function releaseKey(r: Release): string { return r.appId + "@" + r.release; }
+export function freezeJson(value: unknown): void {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeJson(child);
+    Object.freeze(value);
+  }
+}

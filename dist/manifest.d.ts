@@ -8,3 +8,4 @@ export declare function assertAssetUrl(raw: string, origins: readonly string[]):
 export declare function parseRelease(input: unknown, origins: readonly string[]): Release;
 export declare function assetKey(a: Asset): string;
 export declare function releaseKey(r: Release): string;
+export declare function freezeJson(value: unknown): void;
