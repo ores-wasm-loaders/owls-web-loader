@@ -11,5 +11,12 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
-  }
+  },
+  "files": [
+    "index.mjs",
+    "src/**/*.mjs",
+    "src/**/*.ts",
+    ".zpkg.toml",
+    "docs/pilot-integration.md"
+  ]
 }
