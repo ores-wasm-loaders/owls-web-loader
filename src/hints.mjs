@@ -1,6 +1,11 @@
 // Resource hints and intent. Hints are best effort; Coordinator preparation enforces budgets.
 import { LoaderError, preparableAssets } from './contract.mjs';
 
+// User callbacks must not turn best-effort preparation into an unhandled rejection.
+function notify(callback, value) {
+  try { void Promise.resolve(callback(value)).catch(() => {}); } catch { /* callback isolation */ }
+}
+
 export function hintDescriptors(release, rel = 'prefetch', budget = 8 * 1024 * 1024) {
   const selected = preparableAssets(release).filter((asset) => rel !== 'modulepreload' || asset.kind === 'module');
   if (!Number.isSafeInteger(budget) || budget < 1 || selected.reduce((total, asset) => total + asset.bytes, 0) > budget) {
@@ -50,39 +55,50 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   let focused = false;
   let touched = false;
   let visible = false;
+  const page = doc?.defaultView ?? doc;
   let stopped = false;
+  let pageHidden = false;
   let startTimer;
   let releaseTimer;
   let lease;
   const wanted = () => pointer || focused || touched || visible;
-  const safeError = (error) => { try { onError(error); } catch { /* callback isolation */ } };
-  const safeOutcome = (outcome) => { try { onOutcome(outcome); } catch { /* callback isolation */ } };
+  const eligible = () => !stopped && !pageHidden && doc?.visibilityState !== 'hidden' && element.isConnected !== false;
   const clearStart = () => { if (startTimer !== undefined) { clearTimeout(startTimer); startTimer = undefined; } };
   const clearRelease = () => { if (releaseTimer !== undefined) { clearTimeout(releaseTimer); releaseTimer = undefined; } };
   const release = () => {
     clearRelease();
-    lease?.release();
+    const previous = lease;
     lease = undefined;
+    previous?.release();
   };
   const start = () => {
-    if (stopped || lease || !wanted()) return;
+    if (!eligible() || lease || !wanted()) return;
     try {
-      lease = coordinator.prepare(key);
-      void lease.promise.then(safeOutcome, safeError);
+      const acquired = coordinator.prepare(key);
+      lease = acquired;
+      void acquired.promise.then(
+        (outcome) => { if (lease === acquired && eligible()) notify(onOutcome, outcome); },
+        (error) => { if (lease === acquired && eligible()) notify(onError, error); },
+      );
+      // A custom coordinator can synchronously trigger teardown while acquiring a lease.
+      if (!eligible()) release();
     } catch (error) {
-      safeError(error);
+      if (eligible()) notify(onError, error);
     }
   };
   const arm = (delay = dwellMs) => {
+    if (!eligible()) return;
     clearRelease();
     if (startTimer === undefined && !lease) {
       startTimer = setTimeout(() => { startTimer = undefined; start(); }, delay);
     }
   };
   const releaseLater = () => {
+    if (stopped) return;
+    if (!eligible()) { clearStart(); release(); return; }
     if (wanted()) { clearRelease(); return; }
     clearStart();
-    if (releaseTimer !== undefined) return;
+    if (releaseTimer !== undefined || !lease) return;
     releaseTimer = setTimeout(() => {
       releaseTimer = undefined;
       if (!wanted()) release();
@@ -97,7 +113,8 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   const touchEnd = () => { touched = false; releaseLater(); };
   const pointerDown = () => { pointer = true; clearStart(); start(); };
   const hide = (event) => {
-    if (event.type === 'pagehide' || doc?.visibilityState === 'hidden') {
+    if (event.type === 'pagehide') pageHidden = true;
+    if (pageHidden || doc?.visibilityState === 'hidden') {
       pointer = false;
       focused = false;
       touched = false;
@@ -106,6 +123,8 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
       release();
     }
   };
+
+  const show = () => { pageHidden = false; };
 
   element.addEventListener('pointerenter', pointerEnter, { passive: true });
   element.addEventListener('pointerleave', pointerLeave, { passive: true });
@@ -116,12 +135,15 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   element.addEventListener('touchend', touchEnd, { passive: true });
   element.addEventListener('touchcancel', touchEnd, { passive: true });
   doc?.addEventListener('visibilitychange', hide);
-  doc?.addEventListener('pagehide', hide);
+  page?.addEventListener('pagehide', hide);
+  page?.addEventListener('pageshow', show);
 
   let observer = null;
-  if (visibilityMs > 0 && typeof IntersectionObserver === 'function') {
-    observer = new IntersectionObserver((entries) => {
-      visible = entries.some((entry) => entry.isIntersecting);
+  const Observer = page?.IntersectionObserver ?? globalThis.IntersectionObserver;
+  if (visibilityMs > 0 && typeof Observer === 'function') {
+    observer = new Observer((entries) => {
+      if (!eligible()) return;
+      visible = entries.some((entry) => entry.target === element && entry.isIntersecting);
       if (visible) arm(visibilityMs);
       else releaseLater();
     }, { rootMargin: '0px 0px -25% 0px' });
@@ -129,6 +151,7 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   }
 
   return () => {
+    if (stopped) return;
     stopped = true;
     pointer = false;
     focused = false;
@@ -145,27 +168,37 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     element.removeEventListener('touchend', touchEnd);
     element.removeEventListener('touchcancel', touchEnd);
     doc?.removeEventListener('visibilitychange', hide);
-    doc?.removeEventListener('pagehide', hide);
+    page?.removeEventListener('pagehide', hide);
+    page?.removeEventListener('pageshow', show);
     observer?.disconnect();
   };
 }
 
 export function prepareWhenIdle(coordinator, key, onError = () => {}) {
   let lease;
+  let stopped = false;
+  const report = (error) => { if (!stopped) notify(onError, error); };
   const start = () => {
+    if (stopped || lease) return;
     try {
-      lease = coordinator.prepare(key);
-      void lease.promise.catch(onError);
+      const acquired = coordinator.prepare(key);
+      void acquired.promise.catch(report);
+      if (stopped) acquired.release();
+      else lease = acquired;
     } catch (error) {
-      onError(error);
+      report(error);
     }
   };
   const idle = typeof globalThis.requestIdleCallback === 'function';
   const id = idle ? globalThis.requestIdleCallback(start) : setTimeout(start, 200);
   return () => {
-    lease?.release();
+    if (stopped) return;
+    stopped = true;
     if (idle) globalThis.cancelIdleCallback?.(id);
     else clearTimeout(id);
+    const previous = lease;
+    lease = undefined;
+    previous?.release();
   };
 }
 

@@ -105,8 +105,13 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   const coordinator = setup(async () => { calls += 1; return BYTES; });
   const listeners = new Map();
   const documentListeners = new Map();
+  const pageListeners = new Map();
   const document = {
     visibilityState: 'visible',
+    defaultView: {
+      addEventListener: (name, fn) => pageListeners.set(name, fn),
+      removeEventListener: (name) => pageListeners.delete(name),
+    },
     addEventListener: (name, fn) => documentListeners.set(name, fn),
     removeEventListener: (name) => documentListeners.delete(name),
   };
@@ -118,9 +123,11 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   const stop = prepareOnIntent(element, coordinator, KEY, { dwellMs: 20, exitGraceMs: 20 });
 
   listeners.get('pointerenter')();
-  documentListeners.get('pagehide')({ type: 'pagehide' });
+  pageListeners.get('pagehide')({ type: 'pagehide' });
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(calls, 0);
+  assert.equal(documentListeners.has('pagehide'), false);
+  pageListeners.get('pageshow')({ type: 'pageshow' });
 
   listeners.get('pointerenter')();
   listeners.get('pointerleave')();
