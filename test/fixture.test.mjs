@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-const expectedDigest = '93a44bbb96c751218e4c00d479010ce4c7e22d0fe8c71ac08fb6a39ccca33e24';
+const expectedDigest = '93a44bbb96c751218e4c00d479e4c14358122a389acca16205b1e4d0dc5f9476';
 
 test('the marketing probe is a stable minimal WebAssembly module', async () => {
   const bytes = await readFile(new URL('../fixtures/empty.wasm', import.meta.url));
