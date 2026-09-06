@@ -7,10 +7,16 @@ function text(name) {
 }
 
 function table(source, heading) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = source.match(new RegExp(`^\\[${escaped}\\]\\s*$([\\s\\S]*?)(?=^\\[|\\Z)`, 'm'));
-  assert.ok(match, `missing [${heading}] table`);
-  return match[1];
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === `[${heading}]`);
+  assert.notEqual(start, -1, `missing [${heading}] table`);
+
+  const body = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*\[/.test(line)) break;
+    body.push(line);
+  }
+  return body.join('\n');
 }
 
 function quotedValue(source, key) {
