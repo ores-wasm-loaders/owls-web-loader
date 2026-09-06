@@ -103,3 +103,8 @@ test("extension configuration is immutable and part of release identity",()=>{
   assert.throws(()=>c.register(r),{code:"release-conflict"});
   assert.throws(()=>snapshot.extensions.tenant.theme="green");
 });
+test("a schema-shaped but unparseable asset URL raises a declared LoaderError",async () => {
+  const broken = {...manifest(), assets:[{...asset(), url:"https://[/acme/engine.wasm"}]};
+  const c = new Coordinator(policy());
+  assert.throws(() => c.register(broken), e => e.name === "LoaderError" && e.code === "origin");
+});

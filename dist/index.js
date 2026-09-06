@@ -488,7 +488,12 @@ var LoaderError = class extends Error {
   }
 };
 function assertAssetUrl(raw, origins) {
-  const u = new URL(raw);
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new LoaderError("origin", "Asset URL is not a parseable absolute URL");
+  }
   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.href !== raw || !origins.includes(u.origin))
     throw new LoaderError("origin", "Asset URL must be canonical HTTPS on an allowed origin");
   return u;

@@ -5,7 +5,11 @@ export class LoaderError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "LoaderError"; }
 }
 export function assertAssetUrl(raw: string, origins: readonly string[]): URL {
-  const u = new URL(raw);
+  // A URL that satisfies the schema pattern can still be unparseable; report it as a
+  // declared LoaderError rather than leaking the parser's TypeError to the caller.
+  let u: URL;
+  try { u = new URL(raw); }
+  catch { throw new LoaderError("origin", "Asset URL is not a parseable absolute URL"); }
   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash ||
       u.href !== raw || !origins.includes(u.origin))
     throw new LoaderError("origin", "Asset URL must be canonical HTTPS on an allowed origin");
