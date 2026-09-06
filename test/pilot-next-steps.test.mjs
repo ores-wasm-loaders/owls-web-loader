@@ -330,10 +330,10 @@ test('activation acquires ownership before the intent lease is released', async 
   w.element.dispatchEvent(new Event('focusin')); await tick();
   w.element.dispatchEvent(clickEvent()); await tick(); assert.deepEqual(order.slice(0, 2), ['activate', 'release']); dispose();
 });
-test('touch preparation is off by default and window pagehide clears dwell', async () => {
+test('touch preparation can be disabled and window pagehide clears dwell', async () => {
   const w = link(); let prepared = 0;
   const coordinator = { prepare: () => { prepared += 1; return { promise: Promise.resolve(), release() {} }; } };
-  const dispose = prepareOnIntent(w.element, coordinator, KEY, { dwellMs: 5 });
+  const dispose = prepareOnIntent(w.element, coordinator, KEY, { dwellMs: 5, prepareOnTouch: false });
   w.element.dispatchEvent(new Event('touchstart'));
   w.element.dispatchEvent(Object.assign(new Event('pointerenter'), { pointerType: 'touch' }));
   await new Promise((r) => setTimeout(r, 10)); assert.equal(prepared, 0);

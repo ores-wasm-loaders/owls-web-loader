@@ -41,11 +41,13 @@ jobs:
           } > evidence/versions.txt
           # Explicit public source paths only: no .git, credentials, environment files,
           # ignored workspaces, or whole-runner archives. Supports offline reproduction.
-          tar -czf evidence/source.tar.gz \
-            index.mjs package.json src test LICENSE \
-            owls-interfaces/index.mjs owls-interfaces/release.mjs \
-            owls-interfaces/validate.mjs owls-interfaces/schemas \
-            owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/LICENSE
+          sources=(index.mjs package.json src test LICENSE
+            owls-interfaces/index.mjs owls-interfaces/release.mjs
+            owls-interfaces/validate.mjs owls-interfaces/schemas
+            owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/LICENSE)
+          if test -d fixtures; then sources+=(fixtures); fi
+          if test -d docs; then sources+=(docs); fi
+          tar -czf evidence/source.tar.gz "${sources[@]}"
           sha256sum evidence/source.tar.gz > evidence/source.tar.gz.sha256
       - name: Run source and lifecycle tests
         shell: bash
