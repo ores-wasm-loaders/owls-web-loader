@@ -15,4 +15,6 @@ export declare class MemoryStore implements ByteStore {
     put(key: string, bytes: Uint8Array): Promise<void>;
 }
 export declare function verifyBytes(asset: Asset, bytes: Uint8Array): Promise<void>;
+/** Reject a response that could turn a declared module/WASM/font into HTML or another type. */
+export declare function responseContentTypeAllowed(asset: Asset, header: string | null): boolean;
 export declare function httpTransport(fetcher?: typeof fetch): FetchAsset;

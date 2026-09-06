@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {Coordinator, browserPolicy, RawWasmAdapter, BindgenAdapter, MemoryStore, httpTransport, parseRelease, hintDescriptors, mountFlutterView} from "../dist/index.js";
+import {Coordinator, browserPolicy, RawWasmAdapter, BindgenAdapter, MemoryStore, httpTransport, parseRelease, hintDescriptors, mountFlutterView, prepareOnIntent} from "../dist/index.js";
 import {linkHeader} from "../dist/server.js";
 
 const bytes = Uint8Array.from([0,97,115,109,1,0,0,0]);
@@ -22,7 +22,8 @@ test("preparation never activates; concurrent warmup and activation deduplicate"
 });
 test("bad speculative download is evicted and activation retries",async () => {
   let calls=0;const c=setup(async()=>++calls===1?new Uint8Array(8):bytes);
-  await assert.rejects(c.prefetch("demo@r1"),{code:"integrity"});
+  const warm=await c.prefetch("demo@r1");
+  assert.equal(warm.status,"failed"); assert.equal(warm.reason,"integrity");
   assert.ok(await c.activate("demo@r1",new RawWasmAdapter()));
   assert.equal(calls,2);
 });
@@ -34,11 +35,11 @@ test("HTTP transport cancels a chunked body before over-budget bytes accumulate"
   let cancelled=false;
   const transport=httpTransport(async()=>new Response(new ReadableStream({
     start(c){c.enqueue(new Uint8Array(20));},cancel(){cancelled=true;}
-  })));
+  }),{headers:{"content-type":"application/wasm"}}));
   await assert.rejects(transport(asset(),new AbortController().signal),{code:"size"});assert.equal(cancelled,true);
 });
 test("credentials and redirects are disabled on public transport",async () => {
-  const transport=httpTransport(async(url,init)=>{assert.equal(init.credentials,"omit");assert.equal(init.redirect,"error");return new Response(bytes);});
+  const transport=httpTransport(async(url,init)=>{assert.equal(init.credentials,"omit");assert.equal(init.redirect,"error");return new Response(bytes,{headers:{"content-type":"application/wasm"}});});
   assert.deepEqual(await transport(asset(),new AbortController().signal),bytes);
 });
 test("schema, entrypoint, duplicate, origin and mutable release failures", () => {
@@ -61,12 +62,13 @@ test("cancelled queued preparation releases concurrency slots",async()=> {
   }),{concurrency:1});
   const abort=new AbortController();
   const one=c.prefetch("demo@r1"),two=c.prefetch("demo@r1",abort.signal);abort.abort();
-  await assert.rejects(two);await one;
+  assert.equal((await two).status,"cancelled");await one;
   assert.ok(await c.activate("demo@r1",new RawWasmAdapter()));
 });
 test("prefetch timeout aborts transport",async()=> {
   const c=setup(async(a,signal)=>new Promise((resolve,reject)=>signal.addEventListener("abort",()=>reject(signal.reason),{once:true})),{timeoutMs:10});
-  await assert.rejects(c.prefetch("demo@r1"),{code:"timeout"});
+  const outcome=await c.prefetch("demo@r1");
+  assert.equal(outcome.status,"cancelled"); assert.equal(outcome.reason,"timeout");
 });
 test("memory cache is bounded and copies owned bytes",async()=> {
   const s=new MemoryStore(8),b=bytes.slice();await s.put("a",b);b[0]=99;
@@ -102,4 +104,51 @@ test("extension configuration is immutable and part of release identity",()=>{
   assert.equal(snapshot.extensions.tenant.theme,"blue");
   assert.throws(()=>c.register(r),{code:"release-conflict"});
   assert.throws(()=>snapshot.extensions.tenant.theme="green");
+});
+test("preparation leases share one job and one release cannot cancel another",async()=>{
+  let calls=0;const c=setup(async()=>{calls++;return bytes;});
+  const first=c.prepare("demo@r1"),second=c.prepare("demo@r1");
+  first.release();
+  const outcome=await second.promise;
+  second.release();
+  assert.equal(outcome.status,"warmed");assert.equal(calls,1);
+});
+test("activation gives speculative preparation only a bounded handoff",async()=>{
+  const c=setup(async(_asset,signal)=>new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>resolve(bytes),1000);
+    signal.addEventListener("abort",()=>{clearTimeout(timer);reject(signal.reason);},{once:true});
+  }),{timeoutMs:1000,activationJoinMs:10});
+  const warm=c.prefetch("demo@r1");await Promise.resolve();
+  const started=Date.now();
+  assert.equal(await c.activate("demo@r1",{activate:async()=>"ready"}),"ready");
+  assert.ok(Date.now()-started<200,"activation must not wait for the speculative deadline");
+  assert.equal((await warm).status,"cancelled");
+});
+test("intent preparation honors dwell, exit grace and focus retention",async()=>{
+  let calls=0;const c=setup(async()=>{calls++;return bytes;});
+  const listeners=new Map();
+  const document={visibilityState:"visible",addEventListener(){},removeEventListener(){}};
+  const element={ownerDocument:document,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name)=>listeners.delete(name)};
+  const stop=prepareOnIntent(element,c,"demo@r1",{dwellMs:20,exitGraceMs:20});
+  listeners.get("pointerenter")();listeners.get("pointerleave")();
+  await new Promise(resolve=>setTimeout(resolve,45));assert.equal(calls,0);
+  listeners.get("pointerenter")();listeners.get("focusin")();listeners.get("pointerleave")();
+  await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls,1);
+  listeners.get("focusout")();await new Promise(resolve=>setTimeout(resolve,25));stop();
+});
+test("HTTP transport rejects an HTML response for a WASM asset",async()=>{
+  const transport=httpTransport(async()=>new Response("<html/>",{headers:{"content-type":"text/html"}}));
+  await assert.rejects(transport(asset(),new AbortController().signal),{code:"mime"});
+});
+test("release identity is stable across JSON property order and origins are canonical",()=>{
+  const c=setup(async()=>bytes),r=manifest();c.register(r);
+  const reordered={assets:r.assets,entrypoint:r.entrypoint,runtime:r.runtime,release:r.release,appId:r.appId,schemaVersion:r.schemaVersion};
+  assert.doesNotThrow(()=>c.register(reordered));
+  assert.throws(()=>new Coordinator({...browserPolicy(["https://assets.example/"])}),{code:"origin"});
+});
+test("deactivate invokes the adapter cleanup and permits a deliberate new owner",async()=>{
+  let cleaned=0;const c=setup(async()=>bytes);
+  const adapter={activate:async()=>7,deactivate:async()=>{cleaned++;}};
+  assert.equal(await c.activate("demo@r1",adapter),7);assert.equal(await c.deactivate("demo@r1"),true);assert.equal(cleaned,1);
+  assert.equal(await c.activate("demo@r1",{activate:async()=>8}),8);
 });

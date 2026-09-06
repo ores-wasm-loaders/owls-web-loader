@@ -487,18 +487,35 @@ var LoaderError = class extends Error {
     this.name = "LoaderError";
   }
 };
+function assertOrigin(raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new LoaderError("origin", "Allowed origin is not a parseable URL");
+  }
+  if (u.protocol !== "https:" || u.username || u.password || u.pathname !== "/" || u.search || u.hash || u.href !== `${u.origin}/` || raw !== u.origin)
+    throw new LoaderError("origin", "Allowed origins must be canonical HTTPS origins");
+  return u.origin;
+}
 function assertAssetUrl(raw, origins) {
-  const u = new URL(raw);
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new LoaderError("origin", "Asset URL is not a parseable absolute URL");
+  }
   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.href !== raw || !origins.includes(u.origin))
     throw new LoaderError("origin", "Asset URL must be canonical HTTPS on an allowed origin");
   return u;
 }
 function parseRelease(input, origins) {
   if (!generated_validate_default(input)) throw new LoaderError("manifest", "Release does not match release-v1 schema");
+  const allowedOrigins = origins.map(assertOrigin);
   const r = structuredClone(input);
   const ids = /* @__PURE__ */ new Set(), urls = /* @__PURE__ */ new Set();
   for (const a of r.assets) {
-    assertAssetUrl(a.url, origins);
+    assertAssetUrl(a.url, allowedOrigins);
     if (ids.has(a.id) || urls.has(a.url)) throw new LoaderError("duplicate", "Duplicate asset identity");
     ids.add(a.id);
     urls.add(a.url);

@@ -38,6 +38,7 @@ export class BindgenAdapter<T = BindgenModule> implements Adapter<T> {
     context.signal.throwIfAborted();
     const glue = await this.loadGlue(context);
     context.signal.throwIfAborted();
+    if (typeof glue?.default !== "function") throw new LoaderError("glue", "Generated glue does not export an init function");
     await glue.default({module_or_path: bytes});
     context.signal.throwIfAborted();
     return this.start(glue, context);
@@ -52,4 +53,3 @@ export class LeptosAdapter extends BindgenAdapter<void> {
 }
 /** Dioxus owns splitting/routing. The caller supplies its pinned build's launch hook. */
 export class DioxusAdapter<T> extends BindgenAdapter<T> {}
-

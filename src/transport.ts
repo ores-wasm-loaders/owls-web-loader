@@ -32,6 +32,16 @@ export async function verifyBytes(asset: Asset, bytes: Uint8Array): Promise<void
   const hex = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
   if (hex !== asset.sha256) throw new LoaderError("integrity", "Asset SHA-256 mismatch");
 }
+/** Reject a response that could turn a declared module/WASM/font into HTML or another type. */
+export function responseContentTypeAllowed(asset: Asset, header: string | null): boolean {
+  const type = header?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!type) return false;
+  if (asset.kind === "wasm") return type === "application/wasm";
+  if (asset.kind === "module" || asset.kind === "script")
+    return ["text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript"].includes(type);
+  if (asset.kind === "font") return ["font/woff", "font/woff2", "font/ttf", "font/otf", "application/font-woff"].includes(type);
+  return type !== "text/html" && type !== "application/xhtml+xml";
+}
 export function httpTransport(fetcher: typeof fetch = globalThis.fetch): FetchAsset {
   return async (asset, signal) => {
     const response = await fetcher(asset.url, {
@@ -40,6 +50,8 @@ export function httpTransport(fetcher: typeof fetch = globalThis.fetch): FetchAs
     });
     if (!response.ok || !response.body || response.type === "opaque")
       throw new LoaderError("http", "Asset request failed");
+    if (!responseContentTypeAllowed(asset, response.headers.get("content-type")))
+      throw new LoaderError("mime", "Asset response has an unexpected content type");
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let total = 0;
     try {
@@ -58,4 +70,3 @@ export function httpTransport(fetcher: typeof fetch = globalThis.fetch): FetchAs
     return bytes;
   };
 }
-

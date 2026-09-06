@@ -487,18 +487,35 @@ var LoaderError = class extends Error {
     this.name = "LoaderError";
   }
 };
+function assertOrigin(raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new LoaderError("origin", "Allowed origin is not a parseable URL");
+  }
+  if (u.protocol !== "https:" || u.username || u.password || u.pathname !== "/" || u.search || u.hash || u.href !== `${u.origin}/` || raw !== u.origin)
+    throw new LoaderError("origin", "Allowed origins must be canonical HTTPS origins");
+  return u.origin;
+}
 function assertAssetUrl(raw, origins) {
-  const u = new URL(raw);
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new LoaderError("origin", "Asset URL is not a parseable absolute URL");
+  }
   if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.href !== raw || !origins.includes(u.origin))
     throw new LoaderError("origin", "Asset URL must be canonical HTTPS on an allowed origin");
   return u;
 }
 function parseRelease(input, origins) {
   if (!generated_validate_default(input)) throw new LoaderError("manifest", "Release does not match release-v1 schema");
+  const allowedOrigins = origins.map(assertOrigin);
   const r = structuredClone(input);
   const ids = /* @__PURE__ */ new Set(), urls = /* @__PURE__ */ new Set();
   for (const a of r.assets) {
-    assertAssetUrl(a.url, origins);
+    assertAssetUrl(a.url, allowedOrigins);
     if (ids.has(a.id) || urls.has(a.url)) throw new LoaderError("duplicate", "Duplicate asset identity");
     ids.add(a.id);
     urls.add(a.url);
@@ -516,6 +533,14 @@ function assetKey(a) {
 }
 function releaseKey(r) {
   return r.appId + "@" + r.release;
+}
+function releaseIdentity(r) {
+  return canonicalJson(r);
+}
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
 }
 function freezeJson(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -559,6 +584,15 @@ async function verifyBytes(asset, bytes) {
   const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
   if (hex !== asset.sha256) throw new LoaderError("integrity", "Asset SHA-256 mismatch");
 }
+function responseContentTypeAllowed(asset, header) {
+  const type = header?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!type) return false;
+  if (asset.kind === "wasm") return type === "application/wasm";
+  if (asset.kind === "module" || asset.kind === "script")
+    return ["text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript"].includes(type);
+  if (asset.kind === "font") return ["font/woff", "font/woff2", "font/ttf", "font/otf", "application/font-woff"].includes(type);
+  return type !== "text/html" && type !== "application/xhtml+xml";
+}
 function httpTransport(fetcher = globalThis.fetch) {
   return async (asset, signal) => {
     const response = await fetcher(asset.url, {
@@ -571,6 +605,8 @@ function httpTransport(fetcher = globalThis.fetch) {
     });
     if (!response.ok || !response.body || response.type === "opaque")
       throw new LoaderError("http", "Asset request failed");
+    if (!responseContentTypeAllowed(asset, response.headers.get("content-type")))
+      throw new LoaderError("mime", "Asset response has an unexpected content type");
     const reader = response.body.getReader();
     const chunks = [];
     let total = 0;
@@ -607,6 +643,7 @@ function browserPolicy(origins) {
     maxAssetBytes: 64 * 1024 * 1024,
     concurrency: 2,
     timeoutMs: 3e4,
+    activationJoinMs: 50,
     allowPreparation: () => {
       const n = globalThis.navigator;
       return !n?.connection?.saveData && !["slow-2g", "2g"].includes(n?.connection?.effectiveType ?? "");
@@ -621,7 +658,11 @@ var Coordinator = class {
     this.report = report;
     for (const n of [policy.maxPrepareBytes, policy.maxAssetBytes, policy.concurrency, policy.timeoutMs])
       if (!Number.isSafeInteger(n) || n < 1) throw new LoaderError("budget", "Policy limits must be positive integers");
-    this.policy = Object.freeze({ ...policy, origins: Object.freeze([...policy.origins]) });
+    if (!Number.isSafeInteger(policy.activationJoinMs) || policy.activationJoinMs < 0)
+      throw new LoaderError("budget", "Activation join must be a non-negative safe integer");
+    const origins = policy.origins.map(assertOrigin);
+    const activationJoinMs = Math.min(policy.activationJoinMs, policy.timeoutMs);
+    this.policy = Object.freeze({ ...policy, activationJoinMs, origins: Object.freeze(origins) });
   }
   policy;
   manifests = /* @__PURE__ */ new Map();
@@ -631,7 +672,7 @@ var Coordinator = class {
   queue = [];
   register(input) {
     const r = parseRelease(input, this.policy.origins), key = releaseKey(r);
-    const identity = JSON.stringify(r);
+    const identity = releaseIdentity(r);
     const old = this.manifests.get(key);
     if (old && old.identity !== identity) throw new LoaderError("release-conflict", "Release ID already identifies different assets");
     this.manifests.set(key, { release: r, identity });
@@ -701,32 +742,146 @@ var Coordinator = class {
       return bytes;
     });
   }
-  /** A supplied signal owns this preparation call; cancellation is never shared with another caller. */
-  prefetch(key, signal) {
-    const r = this.get(key);
-    if (!this.policy.allowPreparation(r)) return Promise.resolve();
-    const selected = r.assets.filter((a) => a.prepare);
-    if (selected.reduce((n, a) => n + a.bytes, 0) > this.policy.maxPrepareBytes || selected.some((a) => a.bytes > this.policy.maxAssetBytes))
-      return Promise.reject(new LoaderError("budget", "Preparation exceeds policy"));
-    if (!signal && this.preparing.has(key)) return this.preparing.get(key);
-    const controller = new AbortController();
-    const cancel = () => controller.abort(signal?.reason);
-    if (signal?.aborted) cancel();
-    else signal?.addEventListener("abort", cancel, { once: true });
-    const timer = setTimeout(() => controller.abort(new LoaderError("timeout", "Preparation timed out")), this.policy.timeoutMs);
-    const p = Promise.all(selected.map((a) => this.bytes(r, a.id, controller.signal))).then(() => {
-      controller.signal.throwIfAborted();
-      this.emit({ phase: "prepared", appId: r.appId, release: r.release });
-    }).catch((error) => {
-      controller.abort(error);
-      throw error;
-    }).finally(() => {
+  newPreparation(key, r) {
+    const job = {
+      controller: new AbortController(),
+      leases: /* @__PURE__ */ new Set(),
+      promise: Promise.resolve({}),
+      claimed: false,
+      settled: false
+    };
+    this.preparing.set(key, job);
+    const timer = setTimeout(() => job.controller.abort(new LoaderError("timeout", "Preparation timed out")), this.policy.timeoutMs);
+    job.promise = this.runPreparation(r, job).finally(() => {
       clearTimeout(timer);
-      signal?.removeEventListener("abort", cancel);
-      if (!signal) this.preparing.delete(key);
+      job.settled = true;
+      if (this.preparing.get(key) === job) this.preparing.delete(key);
     });
-    if (!signal) this.preparing.set(key, p);
-    return p;
+    return job;
+  }
+  async runPreparation(r, job) {
+    const selected = r.assets.filter((a) => a.prepare);
+    const completed = /* @__PURE__ */ new Set();
+    const tasks = selected.map(async (a) => {
+      await this.bytes(r, a.id, job.controller.signal);
+      completed.add(a.id);
+    });
+    try {
+      await Promise.all(tasks);
+      job.controller.signal.throwIfAborted();
+      const prepared = selected.filter((a) => completed.has(a.id));
+      const outcome = this.outcome(r, "warmed", prepared.map((a) => a.id), [], prepared.reduce((n, a) => n + a.bytes, 0));
+      this.emit({ phase: "prepared", appId: r.appId, release: r.release });
+      return outcome;
+    } catch (error) {
+      const cancelled = job.controller.signal.aborted;
+      if (!cancelled) job.controller.abort(error);
+      await Promise.allSettled(tasks);
+      const prepared = selected.filter((a) => completed.has(a.id));
+      const skipped = selected.filter((a) => !completed.has(a.id)).map((a) => ({
+        id: a.id,
+        reason: cancelled ? "cancelled" : "failed"
+      }));
+      if (!cancelled) this.emit({ phase: "error", appId: r.appId, release: r.release });
+      return this.outcome(
+        r,
+        cancelled ? "cancelled" : "failed",
+        prepared.map((a) => a.id),
+        skipped,
+        prepared.reduce((n, a) => n + a.bytes, 0),
+        reasonOf(error)
+      );
+    }
+  }
+  outcome(r, status, prepared, skipped, bytes, reason) {
+    return Object.freeze({
+      status,
+      appId: r.appId,
+      release: r.release,
+      prepared: Object.freeze([...prepared]),
+      skipped: Object.freeze(skipped.map((s) => Object.freeze({ ...s }))),
+      bytes,
+      ...reason ? { reason } : {}
+    });
+  }
+  /** Acquire a shared, cancellable preparation lease. Releasing one lease never cancels another. */
+  prepare(key, signal) {
+    const r = this.get(key);
+    const selected = r.assets.filter((a) => a.prepare);
+    if (!this.policy.allowPreparation(r)) {
+      const outcome = this.outcome(r, "skipped", [], selected.map((a) => ({ id: a.id, reason: "policy-declined" })), 0, "policy-declined");
+      return { promise: Promise.resolve(outcome), release: () => {
+      } };
+    }
+    if (selected.reduce((n, a) => n + a.bytes, 0) > this.policy.maxPrepareBytes || selected.some((a) => a.bytes > this.policy.maxAssetBytes))
+      throw new LoaderError("budget", "Preparation exceeds policy");
+    const job = this.preparing.get(key) ?? this.newPreparation(key, r);
+    const token = Symbol(key);
+    job.leases.add(token);
+    let released = false;
+    let onAbort;
+    const release = () => {
+      if (released) return;
+      released = true;
+      job.leases.delete(token);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+      if (!job.settled && !job.claimed && job.leases.size === 0)
+        job.controller.abort(new LoaderError("cancelled", "Preparation released"));
+    };
+    if (signal?.aborted) release();
+    else if (signal) {
+      onAbort = release;
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    return { promise: job.promise, release };
+  }
+  /** Fetch-only preparation. The resolved outcome is telemetry-friendly; it never blocks activation. */
+  prefetch(key, signal) {
+    let lease;
+    try {
+      lease = this.prepare(key, signal);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return lease.promise.then((outcome) => signal?.aborted ? this.outcome(
+      this.get(key),
+      "cancelled",
+      outcome.prepared,
+      outcome.skipped,
+      outcome.bytes,
+      "caller-aborted"
+    ) : outcome).finally(lease.release);
+  }
+  /** Abort unclaimed preparation for one release, for pagehide or an explicit policy decision. */
+  cancelPreparation(key) {
+    const job = this.preparing.get(key);
+    if (!job || job.settled || job.claimed) return false;
+    job.controller.abort(new LoaderError("cancelled", "Preparation cancelled"));
+    return true;
+  }
+  /** Abort all speculative jobs that have not been claimed by activation. */
+  cancelAllPreparation() {
+    for (const key of this.preparing.keys()) this.cancelPreparation(key);
+  }
+  async joinPreparation(job) {
+    if (job.settled) return;
+    if (this.policy.activationJoinMs === 0) {
+      job.controller.abort(new LoaderError("cancelled", "Activation took ownership"));
+      return;
+    }
+    await new Promise((resolve) => {
+      let finished = false;
+      const finish = () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      };
+      const timer = setTimeout(finish, this.policy.activationJoinMs);
+      void job.promise.then(finish, finish);
+    });
+    if (!job.settled) job.controller.abort(new LoaderError("cancelled", "Activation took ownership"));
   }
   /** Activation owns a lifetime separate from speculative fetch; a failed warmup never prevents it. */
   activate(key, adapter) {
@@ -735,11 +890,12 @@ var Coordinator = class {
       if (old.adapter !== adapter) return Promise.reject(new LoaderError("adapter-conflict", "Release already has an activation owner"));
       return old.promise;
     }
+    const preparation = this.preparing.get(key);
+    if (preparation) preparation.claimed = true;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new LoaderError("timeout", "Activation timed out")), this.policy.timeoutMs);
     const p = Promise.resolve().then(async () => {
-      await this.preparing.get(key)?.catch(() => {
-      });
+      if (preparation) await this.joinPreparation(preparation);
       controller.signal.throwIfAborted();
       const result = await abortable(adapter.activate({ release: r, signal: controller.signal, bytes: (id) => this.bytes(r, id, controller.signal) }), controller.signal);
       controller.signal.throwIfAborted();
@@ -752,7 +908,25 @@ var Coordinator = class {
     this.active.set(key, { adapter, promise: p });
     return p;
   }
+  /** Release a persistent-shell activation; the adapter owns the actual cleanup semantics. */
+  async deactivate(key) {
+    const entry = this.active.get(key);
+    if (!entry) return false;
+    try {
+      const instance = await entry.promise;
+      if (entry.adapter.deactivate) await entry.adapter.deactivate(instance);
+    } finally {
+      this.active.delete(key);
+    }
+    return true;
+  }
 };
+function reasonOf(error) {
+  if (error instanceof LoaderError) return error.code;
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) return error.name;
+  if (error instanceof Error) return error.name;
+  return "error";
+}
 function abortable(work, signal) {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -800,6 +974,7 @@ var BindgenAdapter = class {
     context.signal.throwIfAborted();
     const glue = await this.loadGlue(context);
     context.signal.throwIfAborted();
+    if (typeof glue?.default !== "function") throw new LoaderError("glue", "Generated glue does not export an init function");
     await glue.default({ module_or_path: bytes });
     context.signal.throwIfAborted();
     return this.start(glue, context);
@@ -924,17 +1099,139 @@ function addHints(doc, release, rel = "prefetch", budget) {
   });
   return () => links.forEach((link) => link.remove());
 }
-function prepareOnIntent(element, coordinator, key, onError = () => {
-}) {
-  const controller = new AbortController();
-  const begin = () => {
-    void coordinator.prefetch(key, controller.signal).catch(onError);
+function prepareOnIntent(element, coordinator, key, optionsOrError = {}) {
+  const options = typeof optionsOrError === "function" ? { onError: optionsOrError } : optionsOrError;
+  const dwellMs = options.dwellMs ?? 150, exitGraceMs = options.exitGraceMs ?? 150;
+  if (!Number.isSafeInteger(dwellMs) || dwellMs < 0 || !Number.isSafeInteger(exitGraceMs) || exitGraceMs < 0)
+    throw new LoaderError("budget", "Intent delays must be non-negative safe integers");
+  const doc = options.doc ?? element.ownerDocument;
+  let pointer = false, focused = false, touched = false, stopped = false;
+  let startTimer, releaseTimer;
+  let lease;
+  const wanted = () => pointer || focused || touched;
+  const clearStart = () => {
+    if (startTimer !== void 0) {
+      clearTimeout(startTimer);
+      startTimer = void 0;
+    }
   };
-  const events = ["pointerenter", "focusin", "touchstart"];
-  for (const event of events) element.addEventListener(event, begin, { passive: true, once: true });
+  const clearRelease = () => {
+    if (releaseTimer !== void 0) {
+      clearTimeout(releaseTimer);
+      releaseTimer = void 0;
+    }
+  };
+  const release = () => {
+    clearRelease();
+    lease?.release();
+    lease = void 0;
+  };
+  const reportError = (error) => {
+    try {
+      options.onError?.(error);
+    } catch {
+    }
+  };
+  const reportOutcome = (outcome) => {
+    try {
+      options.onOutcome?.(outcome);
+    } catch {
+    }
+  };
+  const start = () => {
+    if (stopped || lease || !wanted()) return;
+    try {
+      lease = coordinator.prepare(key);
+      void lease.promise.then(reportOutcome, reportError);
+    } catch (error) {
+      reportError(error);
+    }
+  };
+  const arm = () => {
+    clearRelease();
+    if (startTimer === void 0 && !lease) startTimer = setTimeout(() => {
+      startTimer = void 0;
+      start();
+    }, dwellMs);
+  };
+  const releaseLater = () => {
+    if (wanted()) {
+      clearRelease();
+      return;
+    }
+    clearStart();
+    if (releaseTimer !== void 0) return;
+    releaseTimer = setTimeout(() => {
+      releaseTimer = void 0;
+      if (!wanted()) release();
+    }, exitGraceMs);
+  };
+  const pointerEnter = () => {
+    pointer = true;
+    arm();
+  };
+  const pointerLeave = () => {
+    pointer = false;
+    releaseLater();
+  };
+  const focusIn = () => {
+    focused = true;
+    arm();
+  };
+  const focusOut = () => {
+    focused = false;
+    releaseLater();
+  };
+  const touchStart = () => {
+    touched = true;
+    clearStart();
+    start();
+  };
+  const touchEnd = () => {
+    touched = false;
+    releaseLater();
+  };
+  const pointerDown = () => {
+    pointer = true;
+    clearStart();
+    start();
+  };
+  const hide = () => {
+    if (doc?.visibilityState === "hidden") {
+      pointer = false;
+      focused = false;
+      touched = false;
+      clearStart();
+      release();
+    }
+  };
+  element.addEventListener("pointerenter", pointerEnter, { passive: true });
+  element.addEventListener("pointerleave", pointerLeave, { passive: true });
+  element.addEventListener("pointerdown", pointerDown, { passive: true });
+  element.addEventListener("focusin", focusIn, { passive: true });
+  element.addEventListener("focusout", focusOut, { passive: true });
+  element.addEventListener("touchstart", touchStart, { passive: true });
+  element.addEventListener("touchend", touchEnd, { passive: true });
+  element.addEventListener("touchcancel", touchEnd, { passive: true });
+  doc?.addEventListener("visibilitychange", hide);
+  doc?.addEventListener("pagehide", hide);
   return () => {
-    controller.abort();
-    for (const event of events) element.removeEventListener(event, begin);
+    stopped = true;
+    pointer = false;
+    focused = false;
+    touched = false;
+    clearStart();
+    release();
+    element.removeEventListener("pointerenter", pointerEnter);
+    element.removeEventListener("pointerleave", pointerLeave);
+    element.removeEventListener("pointerdown", pointerDown);
+    element.removeEventListener("focusin", focusIn);
+    element.removeEventListener("focusout", focusOut);
+    element.removeEventListener("touchstart", touchStart);
+    element.removeEventListener("touchend", touchEnd);
+    element.removeEventListener("touchcancel", touchEnd);
+    doc?.removeEventListener("visibilitychange", hide);
+    doc?.removeEventListener("pagehide", hide);
   };
 }
 function prepareWhenIdle(coordinator, key, onError = () => {
@@ -1040,8 +1337,10 @@ export {
   RawWasmAdapter,
   addHints,
   assertAssetUrl,
+  assertOrigin,
   assetKey,
   browserPolicy,
+  canonicalJson,
   createWebViewBridge,
   freezeJson,
   hintDescriptors,
@@ -1050,6 +1349,8 @@ export {
   parseRelease,
   prepareOnIntent,
   prepareWhenIdle,
+  releaseIdentity,
   releaseKey,
+  responseContentTypeAllowed,
   verifyBytes
 };
