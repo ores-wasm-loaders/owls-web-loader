@@ -152,3 +152,8 @@ test("deactivate invokes the adapter cleanup and permits a deliberate new owner"
   assert.equal(await c.activate("demo@r1",adapter),7);assert.equal(await c.deactivate("demo@r1"),true);assert.equal(cleaned,1);
   assert.equal(await c.activate("demo@r1",{activate:async()=>8}),8);
 });
+test("a schema-shaped but unparseable asset URL raises a declared LoaderError",async () => {
+  const broken = {...manifest(), assets:[{...asset(), url:"https://[/acme/engine.wasm"}]};
+  const c = new Coordinator(policy());
+  assert.throws(() => c.register(broken), e => e.name === "LoaderError" && e.code === "origin");
+});

@@ -14,6 +14,8 @@ export function assertOrigin(raw: string): string {
   return u.origin;
 }
 export function assertAssetUrl(raw: string, origins: readonly string[]): URL {
+  // A URL that satisfies the schema pattern can still be unparseable; report it as a
+  // declared LoaderError rather than leaking the parser's TypeError to the caller.
   let u: URL;
   try { u = new URL(raw); }
   catch { throw new LoaderError("origin", "Asset URL is not a parseable absolute URL"); }
