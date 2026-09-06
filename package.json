@@ -6,7 +6,8 @@
   "description": "Shared browser/worker/SSR WASM loading: bounded verified preparation, framework adapters, and a strict prepare-vs-activate split.",
   "exports": {
     ".": "./index.mjs",
-    "./server": "./src/server.mjs"
+    "./server": "./src/server.mjs",
+    "./marketing": "./src/marketing.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
