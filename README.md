@@ -1,26 +1,64 @@
-# OWLS browser, worker and server loader
+# owls-web-loader
 
-TypeScript coordination layer distributed as browser-ready ESM and declarations through zed-pkg.
+Shared browser, worker and SSR loading for the fleet's WASM applications: bounded verified
+preparation, framework adapters, and a strict split between preparing a release and
+activating it.
 
-```ts
-import {Coordinator, browserPolicy, RawWasmAdapter, prepareOnIntent} from "@ores-wasm-loaders/owls-web-loader";
-const loader = new Coordinator(browserPolicy(["https://assets.example"]));
-const release = loader.register(manifest);
-const key = release.appId + "@" + release.release;
-const stopPreparation = prepareOnIntent(openButton, loader, key);
-const adapter = new RawWasmAdapter(imports);
-// On explicit activation:
-const instance = await loader.activate(key, adapter);
+## Two verbs
+
+```js
+await coordinator.prefetch(key);          // fetch-only, bounded, cancellable, integrity-checked
+await coordinator.activate(key, adapter); // start or reuse the app in THIS document
 ```
 
-Preparation never executes JS or WASM. It checks declared budgets before requests, limits streaming reads, verifies exact sizes and SHA-256 hashes, and deduplicates ordinary concurrent warmups. Explicitly cancelled preparation belongs to its caller. Failed warmup does not prevent demand loading.
+`prefetch` never executes application code, authenticates, subscribes or writes, and failing
+is a non-event — `activate` is tested from cold on every commit. A test in this package scans
+its own source and fails the build if any preparation path so much as mentions `import(`,
+`eval`, `new Function`, `createElement('script')` or `WebAssembly.instantiate`.
 
-Use one Coordinator and one adapter object per release in a retained document. An activation failure is terminal for that owner because initialization may have partially executed. Recreate the host/document only after application-specific cleanup; a timeout rejects the caller but cannot undo a non-cooperative adapter's side effects. RawWasmAdapter supports optional compilation without instantiation through compile(context). BindgenAdapter accepts the exact generated glue, binary asset ID and application start hook. LeptosAdapter accepts a pinned hydrate hook; DioxusAdapter leaves routing and splitting to Dioxus. Do not call __wbindgen_start yourself.
+Preparation takes what fits, in the order `owls-interfaces` declares, and returns a receipt
+saying what it prepared and what it skipped and why. Over-budget truncates rather than
+refusing the whole release: rejecting a release for being slightly over budget prepares
+*nothing*, which is the opposite of the point. Two ceilings apply and the stricter wins — the
+page's `policy`, and the publisher's `prepareBudget`.
 
-FlutterAdapter loads a generated bootstrap containing only flutter_js and flutter_build_config. It calls the supported loader lifecycle and starts multi-view mode; mountFlutterView returns an idempotent view-removal callback. Independent Flutter builds require separate documents. Supply getLoader: () => window._flutter?.loader. Do not pre-execute default Flutter bootstraps.
+## What is not reusable
 
-Policy, transport, ByteStore, reporting and adapter callbacks are replaceable. MemoryStore is bounded; CacheStorageStore is opt-in and scoped to an origin and namespace. Cache storage does not register a service worker or intercept the framework's requests. Browser hints are best effort; only explicit fetching enforces streamed body limits. Server helpers under the /server export produce resource Link headers without accessing the DOM.
+A running application is **not** carried across a navigation. A new document gets a new realm;
+an evaluated module and its initialized objects do not transfer. What may carry over is
+downloaded responses — in an eligible, *site-partitioned* cache — and, at the browser's
+discretion, compiled code. Where a live runtime genuinely matters the answer is a persistent
+shell (for Flutter, one engine with embedded multi-view), not a claim that navigation hands a
+runtime along. `addPrerenderRule` is the honest alternative: it prepares the destination's own
+document.
 
-Asset integrity covers bytes fetched by the coordinator. Generated glue loaded by an application import and its transitive imports remain the host's responsibility: use immutable build URLs, CSP and build-owned imports/import-map integrity. A checked fetch does not add integrity to a later dynamic import.
+## Integrity
 
-See [architecture and installation](https://github.com/ores-wasm-loaders/owls-docs). The public registry is currently unavailable; use the immutable preview registry snapshot with zed install --frozen. Run npm ci first, then zed install --adapter node so npm does not remove Zed's Node links. npm test rebuilds and runs contract tests.
+Every asset is fetched credentialless, redirect-less and size-capped, then checked against the
+length and SHA-256 the release declared — from cache as well as from the network. The Flutter
+bootstrap is inserted with an SRI hash derived from that same digest, so the browser refuses to
+execute anything the release did not describe.
+
+## Adapters
+
+| Adapter | Activation |
+| --- | --- |
+| `RawWasmAdapter` | compile + instantiate the entry module with supplied imports |
+| `BindgenAdapter` | run the release's own generated glue against its companion module |
+| `LeptosAdapter` | hydrate the declared islands, once per document |
+| `DioxusAdapter` | mount the chunk the build graph declared for this route |
+| `FlutterAdapter` | the supported `_flutter.loader` lifecycle, one engine per document, multi-view |
+
+The generated glue is part of a release and is never swapped between apps: this package wraps
+the lifecycle, it does not replace the glue.
+
+## No build step
+
+The published source is the source: ESM, no bundler, no dependencies, nothing generated at
+install time. The loading layer is the first thing a page runs and must not drag a toolchain
+in front of itself — which is also why schema validation here is hand-written rather than
+generated by a build-time validator compiler.
+
+```sh
+node --test test/*.test.mjs
+```
