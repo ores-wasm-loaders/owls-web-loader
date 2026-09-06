@@ -1196,8 +1196,8 @@ function prepareOnIntent(element, coordinator, key, optionsOrError = {}) {
     clearStart();
     start();
   };
-  const hide = () => {
-    if (doc?.visibilityState === "hidden") {
+  const hide = (event) => {
+    if (event.type === "pagehide" || doc?.visibilityState === "hidden") {
       pointer = false;
       focused = false;
       touched = false;

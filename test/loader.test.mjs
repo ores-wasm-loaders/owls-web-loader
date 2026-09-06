@@ -127,9 +127,12 @@ test("activation gives speculative preparation only a bounded handoff",async()=>
 test("intent preparation honors dwell, exit grace and focus retention",async()=>{
   let calls=0;const c=setup(async()=>{calls++;return bytes;});
   const listeners=new Map();
-  const document={visibilityState:"visible",addEventListener(){},removeEventListener(){}};
+  const documentListeners=new Map();
+  const document={visibilityState:"visible",addEventListener:(name,fn)=>documentListeners.set(name,fn),removeEventListener:(name)=>documentListeners.delete(name)};
   const element={ownerDocument:document,addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name)=>listeners.delete(name)};
   const stop=prepareOnIntent(element,c,"demo@r1",{dwellMs:20,exitGraceMs:20});
+  listeners.get("pointerenter")();documentListeners.get("pagehide")({type:"pagehide"});
+  await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls,0);
   listeners.get("pointerenter")();listeners.get("pointerleave")();
   await new Promise(resolve=>setTimeout(resolve,45));assert.equal(calls,0);
   listeners.get("pointerenter")();listeners.get("focusin")();listeners.get("pointerleave")();

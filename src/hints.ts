@@ -66,8 +66,8 @@ export function prepareOnIntent(element: EventTarget & {ownerDocument?: Document
   const touchStart = () => { touched = true; clearStart(); start(); };
   const touchEnd = () => { touched = false; releaseLater(); };
   const pointerDown = () => { pointer = true; clearStart(); start(); };
-  const hide = () => {
-    if (doc?.visibilityState === "hidden") {
+  const hide = (event: Event) => {
+    if (event.type === "pagehide" || doc?.visibilityState === "hidden") {
       pointer = false; focused = false; touched = false;
       clearStart(); release();
     }
