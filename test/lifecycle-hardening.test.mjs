@@ -105,8 +105,14 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   const coordinator = setup(async () => { calls += 1; return BYTES; });
   const listeners = new Map();
   const documentListeners = new Map();
+  const windowListeners = new Map();
+  const view = {
+    addEventListener: (name, fn) => windowListeners.set(name, fn),
+    removeEventListener: (name) => windowListeners.delete(name),
+  };
   const document = {
     visibilityState: 'visible',
+    defaultView: view,
     addEventListener: (name, fn) => documentListeners.set(name, fn),
     removeEventListener: (name) => documentListeners.delete(name),
   };
@@ -118,9 +124,10 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   const stop = prepareOnIntent(element, coordinator, KEY, { dwellMs: 20, exitGraceMs: 20 });
 
   listeners.get('pointerenter')();
-  documentListeners.get('pagehide')({ type: 'pagehide' });
+  windowListeners.get('pagehide')({ type: 'pagehide' });
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(calls, 0);
+  windowListeners.get('pageshow')({ type: 'pageshow' });
 
   listeners.get('pointerenter')();
   listeners.get('pointerleave')();
@@ -136,4 +143,25 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   listeners.get('focusout')();
   await new Promise((resolve) => setTimeout(resolve, 25));
   stop();
+});
+
+test('pagehide releases only the link lease while another consumer keeps shared work alive', async (t) => {
+  let finish;
+  let calls = 0;
+  const coordinator = setup(() => {
+    calls += 1;
+    return new Promise((resolve) => { finish = () => resolve(BYTES); });
+  });
+  const keeper = coordinator.prepare(KEY);
+  t.after(() => keeper.release());
+  const view = new EventTarget();
+  const doc = Object.assign(new EventTarget(), { defaultView: view, visibilityState: 'visible' });
+  const element = Object.assign(new EventTarget(), { ownerDocument: doc, isConnected: true });
+  const stop = prepareOnIntent(element, coordinator, KEY);
+  t.after(stop);
+  element.dispatchEvent(new Event('pointerdown'));
+  view.dispatchEvent(new Event('pagehide'));
+  finish();
+  assert.equal((await keeper.promise).status, 'warmed');
+  assert.equal(calls, 1);
 });

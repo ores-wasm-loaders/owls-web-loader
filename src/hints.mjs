@@ -46,6 +46,8 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     }
   }
 
+  const view = doc?.defaultView;
+  let suspended = false;
   let pointer = false;
   let focused = false;
   let touched = false;
@@ -55,31 +57,46 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   let releaseTimer;
   let lease;
   const wanted = () => pointer || focused || touched || visible;
-  const safeError = (error) => { try { onError(error); } catch { /* callback isolation */ } };
-  const safeOutcome = (outcome) => { try { onOutcome(outcome); } catch { /* callback isolation */ } };
+  const eligible = () => !stopped && !suspended && doc?.visibilityState !== 'hidden' && element.isConnected !== false;
+  const safeError = (error) => {
+    if (!eligible()) return;
+    try { onError(error); } catch { /* callback isolation */ }
+  };
+  const safeOutcome = (outcome) => {
+    if (!eligible()) return;
+    try { onOutcome(outcome); } catch { /* callback isolation */ }
+  };
   const clearStart = () => { if (startTimer !== undefined) { clearTimeout(startTimer); startTimer = undefined; } };
   const clearRelease = () => { if (releaseTimer !== undefined) { clearTimeout(releaseTimer); releaseTimer = undefined; } };
   const release = () => {
     clearRelease();
-    lease?.release();
+    const previous = lease;
     lease = undefined;
+    previous?.release();
   };
   const start = () => {
-    if (stopped || lease || !wanted()) return;
+    if (!eligible() || lease || !wanted()) return;
     try {
-      lease = coordinator.prepare(key);
-      void lease.promise.then(safeOutcome, safeError);
+      const current = coordinator.prepare(key);
+      lease = current;
+      // A released lease must not notify a later hover or a restored page.
+      void current.promise.then(
+        (outcome) => { if (lease === current) safeOutcome(outcome); },
+        (error) => { if (lease === current) safeError(error); },
+      );
     } catch (error) {
       safeError(error);
     }
   };
   const arm = (delay = dwellMs) => {
+    if (!eligible()) return;
     clearRelease();
     if (startTimer === undefined && !lease) {
       startTimer = setTimeout(() => { startTimer = undefined; start(); }, delay);
     }
   };
   const releaseLater = () => {
+    if (stopped) return;
     if (wanted()) { clearRelease(); return; }
     clearStart();
     if (releaseTimer !== undefined) return;
@@ -89,15 +106,30 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     }, exitGraceMs);
   };
 
-  const pointerEnter = () => { pointer = true; arm(); };
+  const pointerEnter = (event) => {
+    // Touch pointerenter is synthesized for contact, not sustained hover.
+    if (!eligible() || event?.pointerType === 'touch') return;
+    pointer = true;
+    arm();
+  };
   const pointerLeave = () => { pointer = false; releaseLater(); };
-  const focusIn = () => { focused = true; arm(); };
+  const focusIn = () => { if (eligible()) { focused = true; arm(); } };
   const focusOut = () => { focused = false; releaseLater(); };
-  const touchStart = () => { touched = true; clearStart(); start(); };
+  const touchStart = () => { if (eligible()) { touched = true; clearStart(); start(); } };
   const touchEnd = () => { touched = false; releaseLater(); };
-  const pointerDown = () => { pointer = true; clearStart(); start(); };
+  const pointerDown = (event) => {
+    if (!eligible()) return;
+    if (event?.pointerType === 'touch') touched = true;
+    else pointer = true;
+    clearStart();
+    start();
+  };
+  const pointerUp = (event) => { if (event?.pointerType === 'touch') touchEnd(); };
+  const pointerCancel = () => { pointer = false; touched = false; releaseLater(); };
   const hide = (event) => {
     if (event.type === 'pagehide' || doc?.visibilityState === 'hidden') {
+      // A page in the back/forward cache must not resume until its Window pageshow.
+      if (event.type === 'pagehide') suspended = true;
       pointer = false;
       focused = false;
       touched = false;
@@ -107,20 +139,26 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     }
   };
 
+  const show = () => { suspended = false; };
+
   element.addEventListener('pointerenter', pointerEnter, { passive: true });
   element.addEventListener('pointerleave', pointerLeave, { passive: true });
   element.addEventListener('pointerdown', pointerDown, { passive: true });
+  element.addEventListener('pointerup', pointerUp, { passive: true });
+  element.addEventListener('pointercancel', pointerCancel, { passive: true });
   element.addEventListener('focusin', focusIn, { passive: true });
   element.addEventListener('focusout', focusOut, { passive: true });
   element.addEventListener('touchstart', touchStart, { passive: true });
   element.addEventListener('touchend', touchEnd, { passive: true });
   element.addEventListener('touchcancel', touchEnd, { passive: true });
   doc?.addEventListener('visibilitychange', hide);
-  doc?.addEventListener('pagehide', hide);
+  view?.addEventListener('pagehide', hide);
+  view?.addEventListener('pageshow', show);
 
   let observer = null;
   if (visibilityMs > 0 && typeof IntersectionObserver === 'function') {
     observer = new IntersectionObserver((entries) => {
+      if (!eligible()) return;
       visible = entries.some((entry) => entry.isIntersecting);
       if (visible) arm(visibilityMs);
       else releaseLater();
@@ -129,6 +167,7 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   }
 
   return () => {
+    if (stopped) return;
     stopped = true;
     pointer = false;
     focused = false;
@@ -139,31 +178,46 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     element.removeEventListener('pointerenter', pointerEnter);
     element.removeEventListener('pointerleave', pointerLeave);
     element.removeEventListener('pointerdown', pointerDown);
+    element.removeEventListener('pointerup', pointerUp);
+    element.removeEventListener('pointercancel', pointerCancel);
     element.removeEventListener('focusin', focusIn);
     element.removeEventListener('focusout', focusOut);
     element.removeEventListener('touchstart', touchStart);
     element.removeEventListener('touchend', touchEnd);
     element.removeEventListener('touchcancel', touchEnd);
     doc?.removeEventListener('visibilitychange', hide);
-    doc?.removeEventListener('pagehide', hide);
+    view?.removeEventListener('pagehide', hide);
+    view?.removeEventListener('pageshow', show);
     observer?.disconnect();
   };
 }
 
 export function prepareWhenIdle(coordinator, key, onError = () => {}) {
   let lease;
+  let stopped = false;
+  let started = false;
+  const safeError = (error) => {
+    if (stopped) return;
+    try { onError(error); } catch { /* callback isolation */ }
+  };
   const start = () => {
+    if (stopped || started) return;
+    started = true;
     try {
       lease = coordinator.prepare(key);
-      void lease.promise.catch(onError);
+      void lease.promise.catch(safeError);
     } catch (error) {
-      onError(error);
+      safeError(error);
     }
   };
   const idle = typeof globalThis.requestIdleCallback === 'function';
   const id = idle ? globalThis.requestIdleCallback(start) : setTimeout(start, 200);
   return () => {
-    lease?.release();
+    if (stopped) return;
+    stopped = true;
+    const previous = lease;
+    lease = undefined;
+    previous?.release();
     if (idle) globalThis.cancelIdleCallback?.(id);
     else clearTimeout(id);
   };
