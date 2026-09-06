@@ -1,0 +1,28 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out loader
+        uses: actions/checkout@v4
+      - name: Check out the pinned interface source beside the loader
+        uses: actions/checkout@v4
+        with:
+          repository: ores-wasm-loaders/owls-interfaces
+          ref: 968602ebc7954b382c04218d9cbabbe0ae0c09c7
+          path: owls-interfaces
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run source and lifecycle tests
+        run: npm test
