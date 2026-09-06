@@ -329,12 +329,19 @@ export class Coordinator {
       };
       const abort = () => {
         const receipt = this.#receipts.get(mapKey);
+        const prepared = receipt?.prepared ?? [];
+        const preparedIds = new Set(prepared);
+        const skipped = receipt?.skipped?.length
+          ? receipt.skipped
+          : preparableAssets(release, { variant })
+              .filter((asset) => !preparedIds.has(asset.id))
+              .map((asset) => ({ id: asset.id, reason: 'caller-aborted' }));
         finish(this.#outcome(
           mapKey,
           release,
           variant,
-          receipt?.prepared ?? [],
-          receipt?.skipped ?? [],
+          prepared,
+          skipped,
           receipt?.bytes ?? 0,
           { status: 'cancelled', reason: 'caller-aborted' },
         ));
