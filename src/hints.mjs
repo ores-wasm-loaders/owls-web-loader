@@ -1,6 +1,11 @@
 // Resource hints and intent. Hints are best effort; Coordinator preparation enforces budgets.
 import { LoaderError, preparableAssets } from './contract.mjs';
 
+// User callbacks must not turn best-effort preparation into an unhandled rejection.
+function notify(callback, value) {
+  try { void Promise.resolve(callback(value)).catch(() => {}); } catch { /* callback isolation */ }
+}
+
 export function hintDescriptors(release, rel = 'prefetch', budget = 8 * 1024 * 1024) {
   const selected = preparableAssets(release).filter((asset) => rel !== 'modulepreload' || asset.kind === 'module');
   if (!Number.isSafeInteger(budget) || budget < 1 || selected.reduce((total, asset) => total + asset.bytes, 0) > budget) {
@@ -60,11 +65,11 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   const eligible = () => !stopped && !suspended && doc?.visibilityState !== 'hidden' && element.isConnected !== false;
   const safeError = (error) => {
     if (!eligible()) return;
-    try { onError(error); } catch { /* callback isolation */ }
+    notify(onError, error);
   };
   const safeOutcome = (outcome) => {
     if (!eligible()) return;
-    try { onOutcome(outcome); } catch { /* callback isolation */ }
+    notify(onOutcome, outcome);
   };
   const clearStart = () => { if (startTimer !== undefined) { clearTimeout(startTimer); startTimer = undefined; } };
   const clearRelease = () => { if (releaseTimer !== undefined) { clearTimeout(releaseTimer); releaseTimer = undefined; } };
@@ -84,6 +89,8 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
         (outcome) => { if (lease === current) safeOutcome(outcome); },
         (error) => { if (lease === current) safeError(error); },
       );
+      // A custom coordinator can synchronously trigger teardown while acquiring a lease.
+      if (!eligible()) release();
     } catch (error) {
       safeError(error);
     }
@@ -97,9 +104,10 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   };
   const releaseLater = () => {
     if (stopped) return;
+    if (!eligible()) { clearStart(); release(); return; }
     if (wanted()) { clearRelease(); return; }
     clearStart();
-    if (releaseTimer !== undefined) return;
+    if (releaseTimer !== undefined || !lease) return;
     releaseTimer = setTimeout(() => {
       releaseTimer = undefined;
       if (!wanted()) release();
@@ -156,8 +164,9 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   view?.addEventListener('pageshow', show);
 
   let observer = null;
-  if (visibilityMs > 0 && typeof IntersectionObserver === 'function') {
-    observer = new IntersectionObserver((entries) => {
+  const Observer = view?.IntersectionObserver ?? globalThis.IntersectionObserver;
+  if (visibilityMs > 0 && typeof Observer === 'function') {
+    observer = new Observer((entries) => {
       if (!eligible()) return;
       visible = entries.some((entry) => entry.isIntersecting);
       if (visible) arm(visibilityMs);
@@ -198,14 +207,16 @@ export function prepareWhenIdle(coordinator, key, onError = () => {}) {
   let started = false;
   const safeError = (error) => {
     if (stopped) return;
-    try { onError(error); } catch { /* callback isolation */ }
+    notify(onError, error);
   };
   const start = () => {
     if (stopped || started) return;
     started = true;
     try {
-      lease = coordinator.prepare(key);
-      void lease.promise.catch(safeError);
+      const acquired = coordinator.prepare(key);
+      void acquired.promise.catch(safeError);
+      if (stopped) acquired.release();
+      else lease = acquired;
     } catch (error) {
       safeError(error);
     }
