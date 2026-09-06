@@ -1,64 +1,47 @@
 name: test
-
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/wl-05-wt-06-pilot-lifecycle-20260906]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   node:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Check out loader
-        uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Check out the pinned interface source beside the loader
-        uses: actions/checkout@v4
+      - name: Check out the admitted browser-safe contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: 968602ebc7954b382c04218d9cbabbe0ae0c09c7
+          ref: d036d73c35ced08f028c402407c667c339df79e6
           path: owls-interfaces
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Record reproducible source evidence
+      - name: Record exact public sources and tool versions
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p evidence
-          {
-            printf 'loader='; git rev-parse HEAD
-            printf 'interfaces='; git -C owls-interfaces rev-parse HEAD
-            printf 'node='; node --version
-            printf 'scope=Node conformance; not real-browser or published-package certification\n'
-          } > evidence/versions.txt
-          # Explicit public source paths only: no .git, credentials, environment files,
-          # ignored workspaces, or whole-runner archives. Supports offline reproduction.
-          sources=(index.mjs package.json src test LICENSE
-            owls-interfaces/index.mjs owls-interfaces/release.mjs
-            owls-interfaces/validate.mjs owls-interfaces/schemas
-            owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/LICENSE)
-          if test -d fixtures; then sources+=(fixtures); fi
-          if test -d docs; then sources+=(docs); fi
-          tar -czf evidence/source.tar.gz "${sources[@]}"
-          sha256sum evidence/source.tar.gz > evidence/source.tar.gz.sha256
-      - name: Run source and lifecycle tests
+          { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
+          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/LICENSE
+          sha256sum evidence/source.tar.gz > evidence/source.sha256
+      - name: Run all combined regressions and contract tests
         shell: bash
         run: |
           set -euo pipefail
-          node --test --test-reporter=tap test/*.test.mjs | tee evidence/node.tap
-      - name: Preserve conformance evidence even on failure
+          node --test --test-reporter=tap test/*.test.mjs | tee evidence/loader.tap
+          node --test --test-reporter=tap owls-interfaces/test/*.test.mjs | tee evidence/contract.tap
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: node-conformance-${{ github.sha }}
+          name: loader-conformance-${{ github.sha }}
           path: evidence/
+          retention-days: 30
           if-no-files-found: error
-          retention-days: 7
