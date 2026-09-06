@@ -37,14 +37,14 @@ export class MemoryStore {
     await this.delete(key);
     if (bytes.length > this.maxBytes) return;
     while (this.#size + bytes.length > this.maxBytes) await this.delete(this.#values.keys().next().value);
-    this.#values.set(key, bytes.slice());
+    this.#values.set(key, Uint8Array.from(bytes));
     this.#size += bytes.length;
   }
 }
 
 export async function verifyBytes(asset, bytes) {
   if (bytes.byteLength !== asset.bytes) throw new LoaderError('size', `Asset ${asset.id}: byte length mismatch`);
-  const hash = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
+  const hash = await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes).buffer);
   const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('');
   if (hex !== asset.sha256) throw new LoaderError('integrity', `Asset ${asset.id}: SHA-256 mismatch`);
 }

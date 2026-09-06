@@ -11,3 +11,6 @@ export { FlutterAdapter, mountFlutterView, startupVariant } from './src/flutter.
 export { hintDescriptors, addHints, prepareOnIntent, prepareWhenIdle, addPrerenderRule } from './src/hints.mjs';
 export { createWebViewBridge } from './src/webview.mjs';
 export { LoaderError, parseRelease, releaseSchema, preparableAssets, chunkForRoute, assetKey, releaseKey } from './src/contract.mjs';
+export { ActivationHost } from './src/ownership.mjs';
+export { pilotPolicy, connectApplicationLink } from './src/pilot.mjs';
+export { createLoaderReporter } from './src/telemetry.mjs';

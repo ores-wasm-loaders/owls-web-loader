@@ -36,6 +36,9 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     dwellMs = 150,
     exitGraceMs = 150,
     visibilityMs = 0,
+    prepareOnPress = true,
+    prepareOnTouch = false,
+    variant = 'module',
     doc = element.ownerDocument,
     onOutcome = () => {},
     onError = () => {},
@@ -67,7 +70,7 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   const start = () => {
     if (stopped || lease || !wanted()) return;
     try {
-      lease = coordinator.prepare(key);
+      lease = coordinator.prepare(key, undefined, { variant });
       void lease.promise.then(safeOutcome, safeError);
     } catch (error) {
       safeError(error);
@@ -89,13 +92,16 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     }, exitGraceMs);
   };
 
-  const pointerEnter = () => { pointer = true; arm(); };
+  const pointerEnter = (event) => { if (event?.pointerType === 'touch' && !prepareOnTouch) return; pointer = true; arm(); };
   const pointerLeave = () => { pointer = false; releaseLater(); };
   const focusIn = () => { focused = true; arm(); };
   const focusOut = () => { focused = false; releaseLater(); };
-  const touchStart = () => { touched = true; clearStart(); start(); };
+  const touchStart = () => { if (!prepareOnTouch) return; touched = true; clearStart(); start(); };
   const touchEnd = () => { touched = false; releaseLater(); };
-  const pointerDown = () => { pointer = true; clearStart(); start(); };
+  const pointerDown = (event) => {
+    if (!prepareOnPress || (event?.pointerType === 'touch' && !prepareOnTouch)) return;
+    pointer = true; clearStart(); start();
+  };
   const hide = (event) => {
     if (event.type === 'pagehide' || doc?.visibilityState === 'hidden') {
       pointer = false;
@@ -116,7 +122,8 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   element.addEventListener('touchend', touchEnd, { passive: true });
   element.addEventListener('touchcancel', touchEnd, { passive: true });
   doc?.addEventListener('visibilitychange', hide);
-  doc?.addEventListener('pagehide', hide);
+  const page = doc?.defaultView ?? doc;
+  page?.addEventListener('pagehide', hide);
 
   let observer = null;
   if (visibilityMs > 0 && typeof IntersectionObserver === 'function') {
@@ -145,7 +152,7 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     element.removeEventListener('touchend', touchEnd);
     element.removeEventListener('touchcancel', touchEnd);
     doc?.removeEventListener('visibilitychange', hide);
-    doc?.removeEventListener('pagehide', hide);
+    page?.removeEventListener('pagehide', hide);
     observer?.disconnect();
   };
 }

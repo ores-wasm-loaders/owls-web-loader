@@ -4,6 +4,8 @@
 // while its document remains alive; normal navigation never transfers a runtime to a new page.
 import { LoaderError, parseRelease, releaseSchema, preparableAssets, assetKey, releaseKey } from './contract.mjs';
 import { httpTransport, MemoryStore, verifyBytes } from './transport.mjs';
+import { SharedFetches, waitFor } from './ownership.mjs';
+import { fetchManifest } from './manifest-fetch.mjs';
 
 /**
  * A page policy is a ceiling. The release manifest also declares a preparation budget; the
@@ -33,10 +35,14 @@ export class Coordinator {
   #active = new Map();
   #queue = [];
   #running = 0;
+  #fetches = new SharedFetches();
 
   constructor(policy, { transport = httpTransport(), store = new MemoryStore(), report = () => {}, schema = releaseSchema } = {}) {
     for (const n of [policy.maxPrepareBytes, policy.maxAssetBytes, policy.concurrency, policy.timeoutMs]) {
       if (!Number.isSafeInteger(n) || n < 1) throw new LoaderError('budget', 'Policy limits must be positive integers');
+    }
+    if (policy.maxPreparingReleases !== undefined && (!Number.isSafeInteger(policy.maxPreparingReleases) || policy.maxPreparingReleases < 1)) {
+      throw new LoaderError('budget', 'Invalid speculative candidate limit');
     }
     const activationJoinMs = policy.activationJoinMs ?? 50;
     if (!Number.isSafeInteger(activationJoinMs) || activationJoinMs < 0) {
@@ -65,10 +71,9 @@ export class Coordinator {
     return release;
   }
 
-  async load(url, { signal, fetcher = globalThis.fetch } = {}) {
-    const response = await fetcher(url, { signal, credentials: 'omit', redirect: 'error' });
-    if (!response.ok) throw new LoaderError('http', `Manifest ${url}: HTTP ${response.status}`);
-    return this.register(await response.json());
+  async load(url, options = {}) {
+    const input = await fetchManifest(url, this.policy.origins, { timeoutMs: this.policy.timeoutMs, ...options });
+    return this.register(input);
   }
 
   get keys() {
@@ -133,7 +138,9 @@ export class Coordinator {
     if (asset.bytes > this.policy.maxAssetBytes) {
       throw new LoaderError('budget', `Asset \`${id}\` exceeds the page's per-asset ceiling`);
     }
-    return this.#slot(signal, async () => {
+    const requestKey = `${assetKey(asset)}:${asset.bytes}`;
+    const bytes = await this.#fetches.run(requestKey, signal, (ownedSignal) => this.#slot(ownedSignal, async () => {
+      const signal = ownedSignal;
       const key = assetKey(asset);
       const cached = await this.store.get(key).catch(() => undefined);
       if (cached) {
@@ -153,7 +160,9 @@ export class Coordinator {
       await this.store.put(key, bytes).catch(() => {});
       this.#emit({ phase: 'fetch', appId: release.appId, release: release.release, assetId: asset.id, bytes: bytes.length });
       return bytes;
-    });
+    }));
+    // A consumer must not mutate bytes another consumer is about to instantiate.
+    return Uint8Array.from(bytes);
   }
 
   #newPreparation(key, release, variant) {
@@ -168,17 +177,18 @@ export class Coordinator {
       promise: null,
     };
     this.#preparing.set(mapKey, job);
+    this.#receipts.delete(mapKey);
     const timer = setTimeout(
       () => job.controller.abort(new LoaderError('timeout', 'Preparation timed out')),
       this.policy.timeoutMs,
     );
-    job.promise = this.#prepare(mapKey, release, job.controller.signal, variant)
+    job.promise = this.#prepare(mapKey, release, job.controller.signal, variant, job)
       .catch((error) => {
         const outcome = this.#outcome(mapKey, release, variant, [], [], 0, {
           status: job.controller.signal.aborted ? 'cancelled' : 'failed',
           reason: reasonOf(error),
         });
-        this.#receipts.set(mapKey, outcome);
+        if (this.#preparing.get(mapKey) === job) this.#receipts.set(mapKey, outcome);
         return outcome;
       })
       .finally(() => {
@@ -189,11 +199,12 @@ export class Coordinator {
     return job;
   }
 
-  async #prepare(mapKey, release, signal, variant) {
+  async #prepare(mapKey, release, signal, variant, job) {
     this.#emit({ phase: 'prepare-start', appId: release.appId, release: release.release, variant });
     const prepared = [];
     const skipped = [];
     let spent = 0;
+    let reserved = 0;
     let firstFailure;
     const budget = Math.min(
       this.policy.maxPrepareBytes,
@@ -209,10 +220,12 @@ export class Coordinator {
         skipped.push({ id: asset.id, reason: 'over-asset-limit' });
         continue;
       }
-      if (spent + asset.bytes > budget) {
+      if (reserved + asset.bytes > budget) {
         skipped.push({ id: asset.id, reason: 'over-budget' });
         continue;
       }
+      // Failed/partially transferred requests still consume the speculative reservation.
+      reserved += asset.bytes;
       try {
         await this.bytes(release, asset.id, signal);
         spent += asset.bytes;
@@ -232,7 +245,7 @@ export class Coordinator {
       status,
       reason: signal.aborted ? reasonOf(signal.reason) : firstFailure ? reasonOf(firstFailure) : undefined,
     });
-    this.#receipts.set(mapKey, outcome);
+    if (this.#preparing.get(mapKey) === job) this.#receipts.set(mapKey, outcome);
     this.#emit({
       phase: 'prepared',
       appId: release.appId,
@@ -270,22 +283,30 @@ export class Coordinator {
     const release = this.get(key);
     const mapKey = this.#preparationKey(key, variant);
     const selected = preparableAssets(release, { variant });
-    if (!this.policy.allowPreparation(release)) {
+    if (!['module', 'fallback'].includes(variant)) throw new LoaderError('variant', 'Unknown startup variant');
+    const preparingKeys = new Set([...this.#preparing.values()].filter((job) => !job.settled && !job.controller.signal.aborted).map((job) => job.key));
+    const candidateLimited = !preparingKeys.has(key) && preparingKeys.size >= (this.policy.maxPreparingReleases ?? Infinity);
+    if (candidateLimited || !this.policy.allowPreparation(release)) {
       const outcome = this.#outcome(
         mapKey,
         release,
         variant,
         [],
-        selected.map((asset) => ({ id: asset.id, reason: 'policy-declined' })),
+        selected.map((asset) => ({ id: asset.id, reason: candidateLimited ? 'candidate-limit' : 'policy-declined' })),
         0,
-        { status: 'skipped', reason: 'policy-declined' },
+        { status: 'skipped', reason: candidateLimited ? 'candidate-limit' : 'policy-declined' },
       );
       this.#receipts.set(mapKey, outcome);
       const done = Promise.resolve(outcome);
       return Object.freeze({ promise: done, done, release() {} });
     }
 
-    const job = this.#preparing.get(mapKey) ?? this.#newPreparation(key, release, variant);
+    if (signal?.aborted) {
+      const done = Promise.resolve(this.#outcome(mapKey, release, variant, [], [], 0, { status: 'cancelled', reason: 'caller-aborted' }));
+      return Object.freeze({ promise: done, done, release() {} });
+    }
+    const pending = this.#preparing.get(mapKey);
+    const job = pending && !pending.controller.signal.aborted ? pending : this.#newPreparation(key, release, variant);
     const token = Symbol(mapKey);
     job.leases.add(token);
     let released = false;
@@ -304,7 +325,8 @@ export class Coordinator {
       onAbort = releaseLease;
       signal.addEventListener('abort', onAbort, { once: true });
     }
-    return Object.freeze({ promise: job.promise, done: job.promise, release: releaseLease });
+    const done = job.promise.finally(releaseLease);
+    return Object.freeze({ promise: done, done, release: releaseLease });
   }
 
   /** Fetch-only preparation. Failure and cancellation never poison later activation. */
@@ -392,24 +414,29 @@ export class Coordinator {
       return;
     }
     let completed = false;
-    await Promise.race([
-      job.promise.then(() => { completed = true; }, () => { completed = true; }),
-      new Promise((resolve) => setTimeout(resolve, this.policy.activationJoinMs)),
-    ]);
+    let timer;
+    try {
+      await Promise.race([
+        job.promise.then(() => { completed = true; }, () => { completed = true; }),
+        new Promise((resolve) => { timer = setTimeout(resolve, this.policy.activationJoinMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
     if (!completed && !job.settled) {
       job.controller.abort(new LoaderError('cancelled', 'Activation took ownership'));
     }
   }
 
   /** Start or reuse the application in this document. */
-  activate(key, adapter) {
+  activate(key, adapter, { signal } = {}) {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (typeof adapter?.activate !== 'function') return Promise.reject(new LoaderError('adapter', 'Adapter has no activate method'));
     const release = this.get(key);
     const existing = this.#active.get(key);
     if (existing) {
       if (existing.adapter !== adapter) {
         return Promise.reject(new LoaderError('adapter-conflict', `Release ${key} already has an activation owner`));
       }
-      return existing.promise;
+      return waitFor(existing.promise, signal);
     }
 
     const preparation = this.#preparing.get(this.#preparationKey(key, 'module'))
@@ -426,7 +453,7 @@ export class Coordinator {
       .then(async () => {
         await this.#joinPreparation(preparation);
         controller.signal.throwIfAborted();
-        const result = await abortable(
+        const result = await waitFor(
           adapter.activate({
             release,
             signal: controller.signal,
@@ -451,14 +478,15 @@ export class Coordinator {
       .finally(() => clearTimeout(timer));
 
     this.#active.set(key, { adapter, promise });
-    return promise;
+    return waitFor(promise, signal);
   }
 
   async deactivate(key) {
     const entry = this.#active.get(key);
     if (!entry) return false;
     const instance = await entry.promise.catch(() => null);
-    if (instance && typeof entry.adapter.deactivate === 'function') await entry.adapter.deactivate(instance);
+    if (typeof entry.adapter.deactivate !== 'function') return false;
+    if (instance) await entry.adapter.deactivate(instance);
     this.#active.delete(key);
     this.#emit({ phase: 'deactivated', appId: this.get(key).appId, release: this.get(key).release });
     return true;
@@ -472,11 +500,3 @@ function reasonOf(error) {
   return 'error';
 }
 
-function abortable(work, signal) {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    if (signal.aborted) abort();
-    else signal.addEventListener('abort', abort, { once: true });
-    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-  });
-}
