@@ -69,6 +69,7 @@ export class BindgenAdapter {
     const glue = await this.loadGlue(context);
     context.signal.throwIfAborted();
     if (typeof glue?.default !== 'function') throw new LoaderError('glue', 'Glue module exports no init function');
+    this.validateGlue?.(glue);
     await glue.default({ module_or_path: bytes });
     context.signal.throwIfAborted();
     return this.start(glue, context);
@@ -82,7 +83,12 @@ export class BindgenAdapter {
  * which is why the release declares the island list rather than the adapter inferring it.
  */
 export class LeptosAdapter extends BindgenAdapter {
-  constructor(wasmAssetId, loadGlue, hydrate = (glue) => glue.hydrate_islands?.()) {
+  constructor(wasmAssetId, loadGlue, hydrate) {
+    const defaultHydration = hydrate === undefined;
+    hydrate ??= (glue) => {
+      if (typeof glue.hydrate_islands !== 'function') throw new LoaderError('hydrate', 'Leptos glue exports no hydrate_islands function');
+      return glue.hydrate_islands();
+    };
     super(wasmAssetId, loadGlue, async (glue, context) => {
       context.signal.throwIfAborted();
       if (context.release.activation && context.release.activation.mode !== 'hydrate-islands') {
@@ -91,6 +97,16 @@ export class LeptosAdapter extends BindgenAdapter {
       await hydrate(glue);
       return Object.freeze({ mode: 'hydrate-islands', islands: context.release.activation?.islands ?? [] });
     });
+    if (defaultHydration) this.validateGlue = (glue) => {
+      if (typeof glue.hydrate_islands !== 'function') throw new LoaderError('hydrate', 'Leptos glue exports no hydrate_islands function');
+    };
+  }
+
+  async activate(context) {
+    if (context.release.activation && context.release.activation.mode !== 'hydrate-islands') {
+      throw new LoaderError('activation', 'Leptos adapter requires island hydration');
+    }
+    return super.activate(context);
   }
 }
 
@@ -103,7 +119,7 @@ export class DioxusAdapter extends BindgenAdapter {
   constructor(wasmAssetId, loadGlue, mount, route = () => globalThis.location?.pathname ?? '/') {
     super(wasmAssetId, loadGlue, async (glue, context) => {
       context.signal.throwIfAborted();
-      const path = typeof route === 'function' ? route() : route;
+      const path = context.resolvedRoute;
       const chunk = chunkForRoute(context.release, path);
       if (context.release.activation?.mode === 'mount-route' && !chunk) {
         const declared = Object.keys(context.release.activation.routes ?? {}).join(', ') || 'none';
@@ -112,5 +128,18 @@ export class DioxusAdapter extends BindgenAdapter {
       await mount(glue, { route: path, chunk, context });
       return Object.freeze({ mode: 'mount-route', route: path, chunk });
     });
+    this.route = route;
+    if (typeof mount !== 'function') throw new LoaderError('activation', 'Dioxus adapter needs a mount hook');
+  }
+
+  async activate(context) {
+    if (context.release.activation && context.release.activation.mode !== 'mount-route') {
+      throw new LoaderError('activation', 'Dioxus adapter requires route mounting');
+    }
+    const path = typeof this.route === 'function' ? this.route() : this.route;
+    if (context.release.activation?.mode === 'mount-route' && !chunkForRoute(context.release, path)) {
+      throw new LoaderError('route', 'Route maps to no declared chunk');
+    }
+    return super.activate({ ...context, resolvedRoute: path });
   }
 }

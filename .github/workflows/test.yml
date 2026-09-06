@@ -1,33 +1,47 @@
 name: test
-
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feat/wl-05-wt-06-pilot-lifecycle-20260906]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   node:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Check out loader
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Check out the pinned interface source beside the loader
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check out the admitted browser-safe contract and runtime export
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: d036d73c35ced08f028c402407c667c339df79e6
+          ref: 231510f5d01046af657be42a5d4215be12622042
           path: owls-interfaces
           persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Run source, package-metadata, and lifecycle tests
-        run: npm test
+      - name: Record exact public sources and tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
+          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
+          sha256sum evidence/source.tar.gz > evidence/source.sha256
+      - name: Run all combined regressions and contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap test/*.test.mjs | tee evidence/loader.tap
+          node --test --test-reporter=tap owls-interfaces/test/*.test.mjs | tee evidence/contract.tap
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: loader-conformance-${{ github.sha }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: error

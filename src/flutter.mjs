@@ -12,6 +12,7 @@
 //      independently compiled Flutter builds in a shared engine, so a document that already
 //      owns one release refuses a second.
 import { LoaderError, releaseKey } from './contract.mjs';
+import { waitFor } from './ownership.mjs';
 
 const owners = new WeakMap();
 
@@ -22,23 +23,52 @@ export function startupVariant(wasm = globalThis.WebAssembly) {
 
 export class FlutterAdapter {
   constructor(options) {
-    this.options = options;
+    this.options = Object.freeze({
+      ...options,
+      loadConfig: Object.freeze({ ...options.loadConfig }),
+      engineConfig: Object.freeze({ ...options.engineConfig }),
+    });
   }
 
-  async activate(context) {
-    if (context.release.runtime !== 'flutter-web') throw new LoaderError('runtime', 'Expected a flutter-web release');
-    const doc = this.options.document;
-    const key = releaseKey(context.release);
-    const owner = owners.get(doc);
-    if (owner && owner !== key) throw new LoaderError('flutter-owner', 'Use a separate document for an independently compiled Flutter build');
-    if (!owner && this.options.getLoader()) throw new LoaderError('flutter-owner', 'An unmanaged Flutter loader already owns this document');
-    owners.set(doc, key);
+  activate(context) {
+    try {
+      context.signal.throwIfAborted();
+      if (context.release.runtime !== 'flutter-web') throw new LoaderError('runtime', 'Expected a flutter-web release');
+      if (context.release.activation && !['attach-view', 'run-app'].includes(context.release.activation.mode)) {
+        throw new LoaderError('activation', 'Unsupported Flutter activation mode');
+      }
+      if (this.options.bootstrapMode !== 'loader-only') {
+        throw new LoaderError('bootstrap-contract', 'Supply a loader-only generated bootstrap; the default bootstrap already starts an app');
+      }
+      const doc = this.options.document;
+      if (!doc?.head || typeof doc.createElement !== 'function' || typeof this.options.getLoader !== 'function') {
+        throw new LoaderError('target', 'Flutter requires a document and loader accessor');
+      }
+      const key = releaseKey(context.release);
+      const owner = owners.get(doc);
+      if (owner) {
+        if (owner.key !== key || owner.adapter !== this) {
+          throw new LoaderError('flutter-owner', 'Document already has a Flutter release/configuration owner');
+        }
+        return waitFor(owner.promise, context.signal);
+      }
+      if (this.options.getLoader()) throw new LoaderError('flutter-owner', 'An unmanaged Flutter loader owns this document');
+      const promise = Promise.resolve().then(() => this.#start(context));
+      owners.set(doc, { key, adapter: this, promise });
+      // Keep failed ownership quarantined: timeout cannot undo already executed engine code.
+      return promise;
+    } catch (error) { return Promise.reject(error); }
+  }
 
+  async #start(context) {
+    context.signal.throwIfAborted();
+    const doc = this.options.document;
     if (context.release.requiresCrossOriginIsolation && doc.defaultView && doc.defaultView.crossOriginIsolated === false) {
       this.options.log?.('[owls-flutter] release declares the threaded renderer but this document is not cross-origin isolated — Flutter will fall back');
     }
 
     const asset = context.release.assets.find((a) => a.id === context.release.entrypoint);
+    if (asset?.kind !== 'script') throw new LoaderError('bootstrap', 'Flutter bootstrap must be a declared script');
     // Fetching it verifies the digest before the browser is asked to execute it.
     await context.bytes(asset.id);
     context.signal.throwIfAborted();
@@ -87,7 +117,7 @@ export class FlutterAdapter {
               called = true;
               try {
                 context.signal.throwIfAborted();
-                const engine = await initializer.initializeEngine({ ...this.options.engineConfig, multiViewEnabled: multiView });
+                const engine = await initializer.initializeEngine({ ...this.options.loadConfig, ...this.options.engineConfig, multiViewEnabled: multiView });
                 context.signal.throwIfAborted();
                 const app = await engine.runApp();
                 context.signal.throwIfAborted();
@@ -113,6 +143,13 @@ export class FlutterAdapter {
 
 /** Attach a view to a running engine. The returned function removes just that view. */
 export function mountFlutterView(app, hostElement, initialData) {
+  if (typeof app?.addView !== 'function' || typeof app?.removeView !== 'function') {
+    throw new LoaderError('activation', 'Flutter app does not support multi-view');
+  }
+  const bounds = hostElement?.getBoundingClientRect?.();
+  if (hostElement?.nodeType !== 1 || !hostElement.isConnected || !bounds || bounds.width <= 0 || bounds.height <= 0) {
+    throw new LoaderError('target', 'Flutter view requires a connected, nonzero-size host');
+  }
   const id = app.addView({ hostElement, initialData });
   let removed = false;
   return () => {

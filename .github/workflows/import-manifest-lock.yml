@@ -1,0 +1,31 @@
+name: import-reviewed-manifest-lock
+on:
+  push:
+    branches: [feat/wl-05-wt-06-pilot-lifecycle-20260906]
+    paths: [.github/workflows/import-manifest-lock.yml]
+permissions:
+  contents: write
+jobs:
+  locked-tool:
+    if: github.repository == 'ores-wasm-loaders/owls-web-loader'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feat/wl-05-wt-06-pilot-lifecycle-20260906
+      - name: Reproduce the already reviewed successful tool lock and commit only that file
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test ! -e tools/manifest/Cargo.lock
+          rustup toolchain install 1.94.0 --profile minimal
+          cargo +1.94.0 generate-lockfile --manifest-path tools/manifest/Cargo.toml
+          # This exact generated lock was downloaded and reviewed from successful
+          # real-pilot-packages artifact 9996430008 (00f8d5d9 source).
+          printf '%s  %s\n' 93c4f7399cee30fb9e88080c516d47c94b1965818d9bd0a1a71ebabfc5029996 tools/manifest/Cargo.lock | sha256sum --check --strict
+          cargo +1.94.0 test --locked --manifest-path tools/manifest/Cargo.toml
+          git add -- tools/manifest/Cargo.lock
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(WL-13): freeze the reviewed manifest-tool dependency graph' -m 'Generated with Rust 1.94.0; SHA-256 93c4f7399cee30fb9e88080c516d47c94b1965818d9bd0a1a71ebabfc5029996 matches the previously reviewed successful build. Only Cargo.lock is staged; no cache, credential or binary is committed.'
+          git push origin HEAD:refs/heads/feat/wl-05-wt-06-pilot-lifecycle-20260906

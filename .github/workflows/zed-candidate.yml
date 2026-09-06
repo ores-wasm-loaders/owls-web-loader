@@ -1,0 +1,74 @@
+name: zed-candidate
+on:
+  pull_request:
+  push:
+    branches: [main, feat/wl-05-wt-06-pilot-lifecycle-20260906]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: loader
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ores-wasm-loaders/owls-interfaces
+          ref: 231510f5d01046af657be42a5d4215be12622042
+          path: owls-interfaces
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install verified Zed and test both candidate artifacts through its own store
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/zed-tool" evidence
+          EVIDENCE="$GITHUB_WORKSPACE/evidence"
+          curl --fail --location --silent --show-error --retry 3 https://github.com/zed-pkg/zed-cli/releases/download/v0.3.0/zed-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/zed.tgz"
+          printf '%s  %s\n' e380240c96242ab3b29e0e9d14c95ba946d086f20f0732e34d0e5cf47513efc7 "$RUNNER_TEMP/zed.tgz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/zed.tgz" -C "$RUNNER_TEMP/zed-tool"
+          ZED="$(find "$RUNNER_TEMP/zed-tool" -type f -name zed -print -quit)"
+          test -n "$ZED" && chmod +x "$ZED"
+          "$ZED" --version > "$EVIDENCE/zed-version.txt"
+          (cd owls-interfaces && "$ZED" r2g --registry-mode isolated --r2g-root "$RUNNER_TEMP/interface-r2g" --home "$RUNNER_TEMP/interface-home") 2>&1 | tee "$EVIDENCE/interface-r2g.log"
+          REGISTRY="$(find "$RUNNER_TEMP/interface-r2g" -mindepth 2 -maxdepth 2 -type d -name registry -print -quit)"
+          test -n "$REGISTRY"
+          (cd loader && "$ZED" validate && "$ZED" pack --out "$EVIDENCE/packed" && "$ZED" r2g --registry-mode isolated --registry "file://$REGISTRY" --r2g-root "$RUNNER_TEMP/loader-r2g" --home "$RUNNER_TEMP/loader-home") 2>&1 | tee "$EVIDENCE/loader-r2g.log"
+          CONSUMER="$(find "$RUNNER_TEMP/loader-r2g" -mindepth 2 -maxdepth 2 -type d -name consumer -print -quit)"
+          test -n "$CONSUMER"
+          OWN_REGISTRY="$(dirname "$CONSUMER")/registry"
+          # Frozen COPY restore proves independence from the temporary store's symlinks.
+          (cd "$CONSUMER" && "$ZED" install --frozen --install-mode copy --adapter none --registry "file://$OWN_REGISTRY" --home "$RUNNER_TEMP/frozen-home") 2>&1 | tee "$EVIDENCE/frozen-install.log"
+          CONSUMER="$CONSUMER" node --input-type=module <<'NODE' | tee "$EVIDENCE/installed-runtime.log"
+          import assert from 'node:assert/strict';
+          import {join} from 'node:path';
+          import {pathToFileURL} from 'node:url';
+          import {lstatSync} from 'node:fs';
+          const root = join(process.env.CONSUMER, 'zed_modules', 'ores-wasm-loaders');
+          for (const name of ['owls-interfaces','owls-web-loader']) assert.equal(lstatSync(join(root,name)).isSymbolicLink(), false);
+          // Explicitly configure the installed contract; never point to a source checkout.
+          globalThis.__OWLS_INTERFACES_URL__ = pathToFileURL(join(root,'owls-interfaces','index.mjs')).href;
+          const contract = await import(globalThis.__OWLS_INTERFACES_URL__);
+          const loader = await import(pathToFileURL(join(root,'owls-web-loader','index.mjs')).href);
+          assert.equal(typeof contract.parseRelease, 'function');
+          assert.equal(typeof loader.Coordinator, 'function');
+          assert.equal(typeof loader.ActivationHost, 'function');
+          assert.equal(typeof loader.connectApplicationLink, 'function');
+          console.log('PASS: real Zed archives, frozen independent copy, installed contract/coordinator/lifecycle/link exports');
+          console.log('Scope: isolated registry round-trip; not remote production-registry publication');
+          NODE
+          cp "$CONSUMER/.zpkg.lock" "$EVIDENCE/consumer.zpkg.lock"
+          { git -C loader rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > "$EVIDENCE/source.txt"
+          find "$EVIDENCE/packed" -type f -name '*.tar.gz' -exec sha256sum {} \; > "$EVIDENCE/packages.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: zed-candidate-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

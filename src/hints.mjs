@@ -41,6 +41,9 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
     dwellMs = 150,
     exitGraceMs = 150,
     visibilityMs = 0,
+    prepareOnPress = true,
+    prepareOnTouch = true,
+    variant = 'module',
     doc = element.ownerDocument,
     onOutcome = () => {},
     onError = () => {},
@@ -82,7 +85,7 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   const start = () => {
     if (!eligible() || lease || !wanted()) return;
     try {
-      const current = coordinator.prepare(key);
+      const current = coordinator.prepare(key, undefined, { variant });
       lease = current;
       // A released lease must not notify a later hover or a restored page.
       void current.promise.then(
@@ -123,10 +126,10 @@ export function prepareOnIntent(element, coordinator, key, optionsOrError = {}) 
   const pointerLeave = () => { pointer = false; releaseLater(); };
   const focusIn = () => { if (eligible()) { focused = true; arm(); } };
   const focusOut = () => { focused = false; releaseLater(); };
-  const touchStart = () => { if (eligible()) { touched = true; clearStart(); start(); } };
+  const touchStart = () => { if (prepareOnTouch && eligible()) { touched = true; clearStart(); start(); } };
   const touchEnd = () => { touched = false; releaseLater(); };
   const pointerDown = (event) => {
-    if (!eligible()) return;
+    if (!eligible() || !prepareOnPress || (event?.pointerType === 'touch' && !prepareOnTouch)) return;
     if (event?.pointerType === 'touch') touched = true;
     else pointer = true;
     clearStart();

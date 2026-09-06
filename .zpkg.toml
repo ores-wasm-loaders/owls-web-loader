@@ -15,4 +15,4 @@ dir = "."
 adapter = "none"
 [publish]
 include_readme = true
-exclude = [".ores/**", ".zed/**", ".zed-pack/**", "zed_modules/**", "node_modules/**", "coverage/**"]
+exclude = ["tools/**", ".ores/**", ".zed/**", ".zed-pack/**", "zed_modules/**", "node_modules/**", "coverage/**"]
