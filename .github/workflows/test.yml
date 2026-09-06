@@ -12,17 +12,51 @@ permissions:
 jobs:
   node:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out loader
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check out the pinned interface source beside the loader
         uses: actions/checkout@v4
         with:
           repository: ores-wasm-loaders/owls-interfaces
           ref: 968602ebc7954b382c04218d9cbabbe0ae0c09c7
           path: owls-interfaces
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Record reproducible source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            printf 'loader='; git rev-parse HEAD
+            printf 'interfaces='; git -C owls-interfaces rev-parse HEAD
+            printf 'node='; node --version
+            printf 'scope=Node conformance; not real-browser or published-package certification\n'
+          } > evidence/versions.txt
+          # Explicit public source paths only: no .git, credentials, environment files,
+          # ignored workspaces, or whole-runner archives. Supports offline reproduction.
+          tar -czf evidence/source.tar.gz \
+            index.mjs package.json src test LICENSE \
+            owls-interfaces/index.mjs owls-interfaces/release.mjs \
+            owls-interfaces/validate.mjs owls-interfaces/schemas \
+            owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/LICENSE
+          sha256sum evidence/source.tar.gz > evidence/source.tar.gz.sha256
       - name: Run source and lifecycle tests
-        run: npm test
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap test/*.test.mjs | tee evidence/node.tap
+      - name: Preserve conformance evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-conformance-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
