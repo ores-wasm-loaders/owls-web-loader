@@ -145,12 +145,17 @@ test('intent preparation honors dwell, exit grace, focus retention, and pagehide
   stop();
 });
 
-test('pagehide releases only the link lease while another consumer keeps shared work alive', async (t) => {
+test('pagehide releases only the link lease while another consumer keeps shared work alive', { timeout: 2_000 }, async (t) => {
   let finish;
+  let signalStarted;
+  const started = new Promise((resolve) => { signalStarted = resolve; });
   let calls = 0;
   const coordinator = setup(() => {
     calls += 1;
-    return new Promise((resolve) => { finish = () => resolve(BYTES); });
+    return new Promise((resolve) => {
+      finish = () => resolve(BYTES);
+      signalStarted();
+    });
   });
   const keeper = coordinator.prepare(KEY);
   t.after(() => keeper.release());
@@ -160,6 +165,7 @@ test('pagehide releases only the link lease while another consumer keeps shared 
   const stop = prepareOnIntent(element, coordinator, KEY);
   t.after(stop);
   element.dispatchEvent(new Event('pointerdown'));
+  await started;
   view.dispatchEvent(new Event('pagehide'));
   finish();
   assert.equal((await keeper.promise).status, 'warmed');
