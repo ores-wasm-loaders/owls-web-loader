@@ -12,17 +12,22 @@ permissions:
 jobs:
   node:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Check out loader
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Check out the pinned interface source beside the loader
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: 968602ebc7954b382c04218d9cbabbe0ae0c09c7
+          ref: d036d73c35ced08f028c402407c667c339df79e6
           path: owls-interfaces
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - name: Run source and lifecycle tests
+      - name: Run source, package-metadata, and lifecycle tests
         run: npm test
