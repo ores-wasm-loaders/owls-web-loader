@@ -45,6 +45,28 @@ and touch intent start immediately. Focus keeps preparation alive when the point
 positive `visibilityMs`; it is disabled by default so ordinary marketing-page visitors do not
 pay for an application they may never open.
 
+## Browser and CDN loading
+
+The contract remains owned by `owls-interfaces`; the browser loader does not carry a second
+copy. Deploy both packages as sibling directories, or configure the immutable interface module
+URL before dynamically importing the loader:
+
+```html
+<script type="module">
+  globalThis.__OWLS_INTERFACES_URL__ =
+    '/vendor/ores-wasm-loaders/owls-interfaces/index.mjs';
+  const { Coordinator, browserPolicy } = await import(
+    '/vendor/ores-wasm-loaders/owls-web-loader/index.mjs'
+  );
+</script>
+```
+
+The override must be set before the first loader import in that document. It is bootstrap
+configuration, not a runtime switch: one document should use one immutable interface release.
+When no override is supplied, browser deployments try the conventional sibling layout. Node
+continues to discover zed/source-tree installations, but the module has no static `node:`
+imports, so native browser module loading does not fail during parsing.
+
 ## What is not reusable
 
 A running application is **not** carried across a navigation. A new document gets a new realm;
