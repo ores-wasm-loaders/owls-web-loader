@@ -10,4 +10,5 @@ export { RawWasmAdapter, BindgenAdapter, LeptosAdapter, DioxusAdapter } from './
 export { FlutterAdapter, mountFlutterView, startupVariant } from './src/flutter.mjs';
 export { hintDescriptors, addHints, prepareOnIntent, prepareWhenIdle, addPrerenderRule } from './src/hints.mjs';
 export { createWebViewBridge } from './src/webview.mjs';
+export { installMarketingIntentLoader } from './src/marketing.mjs';
 export { LoaderError, parseRelease, releaseSchema, preparableAssets, chunkForRoute, assetKey, releaseKey } from './src/contract.mjs';

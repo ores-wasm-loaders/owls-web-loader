@@ -6,4 +6,5 @@ export * from "./adapters.js";
 export * from "./flutter.js";
 export * from "./hints.js";
 export * from "./webview.js";
+export * from "./marketing.js";
 export * from "./cache-storage.js";
