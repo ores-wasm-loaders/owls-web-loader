@@ -5,6 +5,7 @@
 // subscribes, or writes. The destination document remains the authority for activation.
 import { LoaderError, releaseKey } from './contract.mjs';
 import { prepareOnIntent } from './hints.mjs';
+import { SharedFetches } from './ownership.mjs';
 
 const DEFAULT_SELECTOR = 'a[data-owls-manifest]';
 const VARIANTS = new Set(['module', 'fallback']);
@@ -42,7 +43,8 @@ function variantFor(element) {
 function deferredLease(load, acquire, metadata) {
   let released = false;
   let activeLease;
-  const promise = load().then((release) => {
+  const controller = new AbortController();
+  const promise = load(controller.signal).then((release) => {
     const key = releaseKey(release);
     if (released) {
       const outcome = Object.freeze({
@@ -60,6 +62,8 @@ function deferredLease(load, acquire, metadata) {
       return Object.freeze({ ...metadata, key, outcome });
     }
     activeLease = acquire(key, metadata.variant);
+    // A custom coordinator may synchronously dispose the installation from prepare().
+    if (released) activeLease.release();
     return activeLease.promise.then((outcome) => Object.freeze({ ...metadata, key, outcome }));
   });
 
@@ -69,6 +73,7 @@ function deferredLease(load, acquire, metadata) {
     release() {
       if (released) return;
       released = true;
+      controller.abort(new LoaderError('cancelled', 'Marketing intent released'));
       activeLease?.release();
     },
   });
@@ -79,8 +84,9 @@ function deferredLease(load, acquire, metadata) {
  *
  * Links remain ordinary links. Each link declares a public release-manifest URL with
  * `data-owls-manifest`; optional `data-owls-variant="fallback"` prepares Flutter's JS fallback
- * rather than its Wasm variant. Manifest requests are deduplicated by canonical URL, and a
- * failed request is evicted so a later intent can retry.
+ * rather than its Wasm variant. Manifest requests are shared by canonical URL, but every link
+ * owns a cancellation lease. Failed and abandoned requests are retryable; only successful,
+ * still-owned requests are retained for the lifetime of this installation.
  */
 export function installMarketingIntentLoader({
   coordinator,
@@ -103,20 +109,21 @@ export function installMarketingIntentLoader({
 
   const elements = [...root.querySelectorAll(selector)];
   const manifests = new Map();
+  const requests = new SharedFetches();
   const disposers = [];
   let disposed = false;
 
-  const loadOnce = (url) => {
-    let pending = manifests.get(url);
-    if (!pending) {
-      pending = coordinator.load(url, { fetcher }).catch((error) => {
-        if (manifests.get(url) === pending) manifests.delete(url);
-        throw error;
-      });
-      manifests.set(url, pending);
-    }
-    return pending;
-  };
+  const loadOnce = (url, signal) => requests.run(url, signal, async (ownedSignal) => {
+    // Disposal can precede SharedFetches' scheduled consumer cleanup. Do not start new I/O.
+    if (disposed) throw new LoaderError('cancelled', 'Marketing installation disposed');
+    if (manifests.has(url)) return manifests.get(url);
+    const release = await coordinator.load(url, { fetcher, signal: ownedSignal });
+    // A loader which ignores abort may finish after a new intent has started. It must not
+    // populate this cache, overwrite the replacement request, or acquire an asset lease.
+    ownedSignal.throwIfAborted();
+    if (!disposed) manifests.set(url, release);
+    return release;
+  });
 
   for (const element of elements) {
     let manifestUrl;
@@ -133,7 +140,7 @@ export function installMarketingIntentLoader({
     const facade = Object.freeze({
       prepare() {
         return deferredLease(
-          () => loadOnce(manifestUrl),
+          (signal) => loadOnce(manifestUrl, signal),
           (key, selectedVariant) => coordinator.prepare(key, undefined, { variant: selectedVariant }),
           metadata,
         );

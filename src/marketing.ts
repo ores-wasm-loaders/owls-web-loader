@@ -25,7 +25,7 @@ export interface MarketingPreparationLease {
 export interface MarketingCoordinator {
   load(
     url: string,
-    options: { readonly fetcher: typeof fetch },
+    options: { readonly fetcher: typeof fetch; readonly signal?: AbortSignal },
   ): Promise<Readonly<{ appId: string; release: string }>>;
 
   prepare(
