@@ -75,9 +75,10 @@ jobs:
         run: node scripts/verify-contract-ir-consumer.mjs
 
       - name: Run the complete loader suite against the exact interface source
-        env:
-          __OWLS_INTERFACES_URL__: ${{ github.workspace }}/.tools/owls-interfaces/index.mjs
-        run: node --test test/*.test.mjs
+        run: |
+          set -euo pipefail
+          ln -s .tools/owls-interfaces owls-interfaces
+          node --test test/*.test.mjs
 
       - name: Seal admission evidence
         run: |
