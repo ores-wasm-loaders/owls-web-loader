@@ -1,0 +1,106 @@
+name: contract-ir-consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-ir-consumer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  OWLS_INTERFACES_REF: 62acd61c0dab4579688a09f41dea5693f0a266d0
+  TSJSV_REF: 3171025cbe03a7026a71ce94eea18c910e1431b2
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out browser loader
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check out exact parity-admitted WASM interfaces
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ores-wasm-loaders/owls-interfaces
+          ref: 62acd61c0dab4579688a09f41dea5693f0a266d0
+          path: .tools/owls-interfaces
+          persist-credentials: false
+
+      - name: Check out exact Contract IR producer and verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ORESoftware/typespec-json-schema-validator
+          ref: 3171025cbe03a7026a71ce94eea18c910e1431b2
+          path: .tools/typespec-json-schema-validator
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Install validator dependencies from its lockfile
+        working-directory: .tools/typespec-json-schema-validator
+        run: npm ci --omit=dev
+
+      - name: Check verifier syntax and static consumer assertions
+        run: |
+          set -euo pipefail
+          node --check scripts/verify-contract-ir-consumer.mjs
+          node --test test/contract-ir-consumer.test.mjs
+
+      - name: Emit Schema B, parity receipt, and Contract IR
+        run: |
+          set -euo pipefail
+          mkdir -p .contract-ir-consumer
+          node .tools/typespec-json-schema-validator/bin/typespec-json-schema-validator.mjs check \
+            --typespec=.tools/owls-interfaces/contracts/main.tsp \
+            --schema=.tools/owls-interfaces/schemas/release.schema.json \
+            --report=.contract-ir-consumer/report.json \
+            --contract-ir=.contract-ir-consumer/contract-ir.json \
+            --output-dir=.contract-ir-consumer/generated \
+            --max-probes=96 \
+            --quiet=true
+
+      - name: Verify exact evidence and loader delegation
+        run: node scripts/verify-contract-ir-consumer.mjs
+
+      - name: Run the complete loader suite against the exact interface source
+        run: |
+          set -euo pipefail
+          ln -s .tools/owls-interfaces owls-interfaces
+          node --test test/*.test.mjs
+
+      - name: Seal admission evidence
+        run: |
+          set -euo pipefail
+          {
+            printf 'loader=%s\n' "$(git rev-parse HEAD)"
+            printf 'interfaces=%s\n' "$(git -C .tools/owls-interfaces rev-parse HEAD)"
+            printf 'validator=%s\n' "$(git -C .tools/typespec-json-schema-validator rev-parse HEAD)"
+            printf 'node=%s\n' "$(node --version)"
+          } > .contract-ir-consumer/versions.txt
+          sha256sum \
+            .contract-ir-consumer/report.json \
+            .contract-ir-consumer/contract-ir.json \
+            .contract-ir-consumer/consumer-verification.json \
+            > .contract-ir-consumer/sha256.txt
+
+      - name: Preserve Contract IR consumer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contract-ir-consumer-${{ github.sha }}
+          path: .contract-ir-consumer/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
