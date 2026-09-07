@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -10,10 +11,13 @@ const requireCondition = (condition, message) => {
   if (!condition) throw new Error(`Contract IR consumer admission failed: ${message}`);
 };
 const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'));
+const sha256 = (input) => createHash('sha256').update(input).digest('hex');
+const sorted = (values) => [...values].sort((left, right) => left.localeCompare(right));
 
 const validator = await import(pathToFileURL(resolve(validatorRoot, 'src/index.mjs')).href);
 const report = await readJson(resolve(evidenceDir, 'report.json'));
 const contractIr = await readJson(resolve(evidenceDir, 'contract-ir.json'));
+const projectionReceipt = await readJson(resolve(evidenceDir, 'projection-receipt.json'));
 const recordedGeneratedSchema = report?.inputs?.generatedJsonSchema?.input;
 requireCondition(typeof recordedGeneratedSchema === 'string' && recordedGeneratedSchema !== '', 'receipt omitted Schema B path');
 const generatedSchema = isAbsolute(recordedGeneratedSchema)
@@ -51,6 +55,48 @@ for (const declaration of admitted.values()) {
     `${declaration.id}: authored JSON Schema authority role changed`,
   );
 }
+
+requireCondition(
+  projectionReceipt.schema === 'ores-wasm-loaders.language-projection-receipt/v1',
+  'unknown language projection receipt schema',
+);
+requireCondition(projectionReceipt.status === 'passed' && projectionReceipt.admissible === true, 'language projections are not admitted');
+requireCondition(projectionReceipt.editableAuthority === false, 'language projection receipt was promoted to authority');
+requireCondition(projectionReceipt.contractIrId === contractIr.irId, 'language projections target a different Contract IR');
+requireCondition(projectionReceipt.parityReceiptRunId === report.runId, 'language projections target a different parity receipt');
+requireCondition(projectionReceipt.declarations === contractIr.declarations.length, 'language projection declaration count differs');
+requireCondition(projectionReceipt.authorities?.typespec === 'independently-authored', 'projection receipt lost TypeSpec provenance');
+requireCondition(projectionReceipt.authorities?.jsonSchema === 'independently-authored', 'projection receipt lost JSON Schema provenance');
+requireCondition(projectionReceipt.authorities?.generatedJsonSchema === 'comparison-evidence-only', 'projection receipt promoted Schema B');
+requireCondition(projectionReceipt.authorities?.contractIr === 'downstream-admission-evidence', 'projection receipt promoted Contract IR');
+requireCondition(projectionReceipt.authorities?.precedence === 'none', 'projection receipt ranked an authority');
+
+const { receiptId, ...projectionReceiptBody } = projectionReceipt;
+requireCondition(receiptId === sha256(JSON.stringify(projectionReceiptBody)), 'language projection receipt self digest changed');
+const projectionSources = Object.freeze({
+  dart: 'dart/lib/owls_interfaces.dart',
+  gleam: 'gleam/src/owls_interfaces.gleam',
+  go: 'go/contract.go',
+  rust: 'rust/src/v2.rs',
+  typescript: 'typescript/index.ts',
+});
+const actualLanguages = sorted(projectionReceipt.projections.map((projection) => projection.language));
+const expectedLanguages = sorted(Object.keys(projectionSources));
+requireCondition(JSON.stringify(actualLanguages) === JSON.stringify(expectedLanguages), 'language projection set is incomplete');
+for (const projection of projectionReceipt.projections) {
+  const expectedSource = projectionSources[projection.language];
+  requireCondition(projection.source === expectedSource, `${projection.language}: unexpected projection source`);
+  const source = await readFile(resolve(interfacesRoot, expectedSource), 'utf8');
+  requireCondition(projection.sourceSha256 === sha256(source), `${projection.language}: source digest differs from projection receipt`);
+  requireCondition(projection.declarations === contractIr.declarations.length, `${projection.language}: declaration count differs`);
+}
+const expectedDeclarationDigests = Object.fromEntries(
+  sorted([...admitted.keys()]).map((name) => [name, admitted.get(name).assertionDigest]),
+);
+requireCondition(
+  JSON.stringify(projectionReceipt.declarationDigests) === JSON.stringify(expectedDeclarationDigests),
+  'language projection assertion digests differ from Contract IR',
+);
 
 const interfacesUrl = pathToFileURL(resolve(interfacesRoot, 'index.mjs')).href;
 globalThis.__OWLS_INTERFACES_URL__ = interfacesUrl;
@@ -94,7 +140,7 @@ requireCondition(!contractSource.includes('CURRENT_SCHEMA_VERSION ='), 'browser 
 requireCondition(!contractSource.includes('"$defs"'), 'browser loader embedded a second JSON Schema authority');
 
 const receipt = {
-  schema: 'ores-wasm-loaders.web-loader-contract-ir-consumer/v1',
+  schema: 'ores-wasm-loaders.web-loader-contract-ir-consumer/v2',
   status: 'passed',
   admissible: true,
   loaderCommit: process.env.GITHUB_SHA ?? null,
@@ -102,7 +148,9 @@ const receipt = {
   validatorCommit: process.env.TSJSV_REF ?? null,
   contractIrId: contractIr.irId,
   parityReceiptRunId: report.runId,
+  projectionReceiptId: projectionReceipt.receiptId,
   declarations: contractIr.declarations.length,
+  projections: projectionReceipt.projections.map(({ language, sourceSha256 }) => ({ language, sourceSha256 })),
   fixtures: fixtureResults,
 };
 await writeFile(resolve(evidenceDir, 'consumer-verification.json'), `${JSON.stringify(receipt, null, 2)}\n`);
