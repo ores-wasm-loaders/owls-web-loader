@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OWLS_INTERFACES_REF: 62acd61c0dab4579688a09f41dea5693f0a266d0
+  OWLS_INTERFACES_REF: f8fc1873c1b402c04f67dbf62f89b3691ba300fe
   TSJSV_REF: 3171025cbe03a7026a71ce94eea18c910e1431b2
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: 62acd61c0dab4579688a09f41dea5693f0a266d0
+          ref: f8fc1873c1b402c04f67dbf62f89b3691ba300fe
           path: .tools/owls-interfaces
           persist-credentials: false
 
@@ -71,7 +71,19 @@ jobs:
             --max-probes=96 \
             --quiet=true
 
-      - name: Verify exact evidence and loader delegation
+      - name: Reproduce the five-language projection receipt
+        run: |
+          set -euo pipefail
+          mkdir -p .tools/owls-interfaces/.typespec-json-schema-validator
+          cp .contract-ir-consumer/report.json \
+            .tools/owls-interfaces/.typespec-json-schema-validator/report.json
+          cp .contract-ir-consumer/contract-ir.json \
+            .tools/owls-interfaces/.typespec-json-schema-validator/contract-ir.json
+          node .tools/owls-interfaces/scripts/check-language-projections.mjs
+          cp .tools/owls-interfaces/.typespec-json-schema-validator/projection-receipt.json \
+            .contract-ir-consumer/projection-receipt.json
+
+      - name: Verify exact IR, projection, and loader delegation evidence
         run: node scripts/verify-contract-ir-consumer.mjs
 
       - name: Run the complete loader suite against the exact interface source
@@ -92,6 +104,7 @@ jobs:
           sha256sum \
             .contract-ir-consumer/report.json \
             .contract-ir-consumer/contract-ir.json \
+            .contract-ir-consumer/projection-receipt.json \
             .contract-ir-consumer/consumer-verification.json \
             > .contract-ir-consumer/sha256.txt
 
