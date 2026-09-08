@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: 231510f5d01046af657be42a5d4215be12622042
+          ref: f8fc1873c1b402c04f67dbf62f89b3691ba300fe
           path: owls-interfaces
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
