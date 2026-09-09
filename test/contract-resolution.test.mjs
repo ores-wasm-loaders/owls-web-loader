@@ -14,6 +14,8 @@ test('contract resolver has no static Node imports and honors an explicit browse
     export const releaseProblems = () => [];
     export const releaseSchema = {};
     export const preparableAssets = release => release.assets ?? [];
+    export const dependencyClosure = () => [];
+    export const dependencyClosureForRoute = () => [];
     export const chunkForRoute = () => null;
     export const assetKey = asset => asset.url + '#' + asset.sha256;
     export const releaseKey = release => release.appId + '@' + release.release;
@@ -25,6 +27,8 @@ test('contract resolver has no static Node imports and honors an explicit browse
     const module = await import(`${sourceUrl.href}?browser-contract=${Date.now()}`);
     assert.equal(module.releaseKey({ appId: 'demo', release: 'r1' }), 'demo@r1');
     assert.equal(module.interfaces.parseRelease({ ok: true }).ok, true);
+    assert.equal(typeof module.dependencyClosure, 'function');
+    assert.equal(typeof module.dependencyClosureForRoute, 'function');
   } finally {
     delete globalThis.__OWLS_INTERFACES_URL__;
   }

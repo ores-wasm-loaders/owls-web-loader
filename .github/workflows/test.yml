@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 env:
-  OWLS_INTERFACES_REF: 76364a23364993ff4be1ed82a4978725ed6f811c
+  OWLS_INTERFACES_REF: cfe0b18fe9ae361d94ea0646627cb732465b5496
 jobs:
   node:
     runs-on: ubuntu-24.04
@@ -46,5 +46,41 @@ jobs:
         with:
           name: loader-conformance-${{ github.sha }}
           path: evidence/
+          retention-days: 30
+          if-no-files-found: error
+
+  manifest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.94.0 --profile minimal --component rustfmt
+          rustc +1.94.0 --version
+          cargo +1.94.0 --version
+      - name: Format, test, and build the locked real-build manifest producer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p manifest-evidence
+          cargo +1.94.0 fmt --check --manifest-path tools/manifest/Cargo.toml
+          cargo +1.94.0 test --locked --manifest-path tools/manifest/Cargo.toml 2>&1 | tee manifest-evidence/tests.log
+          cargo +1.94.0 build --locked --release --manifest-path tools/manifest/Cargo.toml 2>&1 | tee manifest-evidence/build.log
+          {
+            printf 'loader=%s\n' "$(git rev-parse HEAD)"
+            printf 'rustc=%s\n' "$(rustc +1.94.0 --version)"
+            printf 'cargo=%s\n' "$(cargo +1.94.0 --version)"
+            sha256sum tools/manifest/Cargo.lock tools/manifest/target/release/owls-build-manifest
+          } > manifest-evidence/versions-and-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: manifest-producer-${{ github.sha }}
+          path: manifest-evidence/
           retention-days: 30
           if-no-files-found: error

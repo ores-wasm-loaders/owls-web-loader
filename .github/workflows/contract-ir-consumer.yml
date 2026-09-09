@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OWLS_INTERFACES_REF: 76364a23364993ff4be1ed82a4978725ed6f811c
+  OWLS_INTERFACES_REF: cfe0b18fe9ae361d94ea0646627cb732465b5496
   TSJSV_REF: 03ccc0ecdfc70f9198c3ccf80718910961d3fde1
 
 jobs:
@@ -67,6 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check scripts/verify-contract-ir-consumer.mjs
+          node --check scripts/verify-route-dependency-consumer.mjs
           node --test test/contract-ir-consumer.test.mjs
 
       - name: Stage admitted interface fixtures as TJSV runtime corpus
@@ -142,7 +143,10 @@ jobs:
             .contract-ir-consumer/projection-receipt.json
 
       - name: Verify exact IR, projection, and loader delegation evidence
-        run: node scripts/verify-contract-ir-consumer.mjs
+        run: |
+          set -euo pipefail
+          node scripts/verify-contract-ir-consumer.mjs
+          node scripts/verify-route-dependency-consumer.mjs
 
       - name: Run the complete loader suite against the exact interface source
         run: |
@@ -165,6 +169,7 @@ jobs:
             .contract-ir-consumer/tjsv-consumer-verification.json \
             .contract-ir-consumer/projection-receipt.json \
             .contract-ir-consumer/consumer-verification.json \
+            .contract-ir-consumer/route-dependency-consumer.json \
             > .contract-ir-consumer/sha256.txt
 
       - name: Preserve Contract IR consumer evidence
