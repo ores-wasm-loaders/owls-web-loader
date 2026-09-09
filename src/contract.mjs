@@ -66,6 +66,8 @@ export const {
   releaseProblems,
   releaseSchema,
   preparableAssets,
+  dependencyClosure,
+  dependencyClosureForRoute,
   chunkForRoute,
   assetKey,
   releaseKey,
