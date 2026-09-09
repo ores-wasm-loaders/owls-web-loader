@@ -1,7 +1,7 @@
 // One coordinator and framework-specific adapters; preparation never starts the application.
 export { Coordinator, browserPolicy } from './src/coordinator.mjs';
 export { httpTransport, MemoryStore, verifyBytes } from './src/transport.mjs';
-export { CacheStorageStore } from './src/cache-storage.mjs';
+export { CacheStorageStore, SHARED_NAVIGATION_CACHE_NAMESPACE, createSameOriginNavigationStore } from './src/cache-storage.mjs';
 export { RawWasmAdapter, BindgenAdapter, LeptosAdapter, DioxusAdapter } from './src/adapters.mjs';
 export { FlutterAdapter, mountFlutterView, startupVariant } from './src/flutter.mjs';
 export { hintDescriptors, addHints, prepareOnIntent, prepareWhenIdle, addPrerenderRule } from './src/hints.mjs';

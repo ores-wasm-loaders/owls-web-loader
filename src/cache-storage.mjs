@@ -4,14 +4,30 @@
 // byte store the coordinator may use, nothing that sits in front of the page.
 import { LoaderError } from './contract.mjs';
 
+export const SHARED_NAVIGATION_CACHE_NAMESPACE = 'owls-navigation-v1';
+
+function isCanonicalHttpsOrigin(origin) {
+  if (typeof origin !== 'string' || origin.length === 0) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === 'https:' && parsed.origin === origin && parsed.href === `${origin}/`;
+  } catch {
+    return false;
+  }
+}
+
+function isCacheStorage(storage) {
+  return storage !== null && typeof storage === 'object' && typeof storage.open === 'function';
+}
+
 export class CacheStorageStore {
   #cache;
 
   constructor(storage, origin, namespace, maxEntryBytes = 64 * 1024 * 1024, maxEntries = 32) {
     if (
+      !isCacheStorage(storage) ||
       !/^owls-[a-z0-9-]+$/.test(namespace) ||
-      new URL(origin).origin !== origin ||
-      !origin.startsWith('https://') ||
+      !isCanonicalHttpsOrigin(origin) ||
       !Number.isSafeInteger(maxEntryBytes) ||
       maxEntryBytes < 1 ||
       !Number.isSafeInteger(maxEntries) ||
@@ -70,4 +86,22 @@ export class CacheStorageStore {
   async delete(key) {
     await (await this.#cache).delete(await this.#request(key));
   }
+}
+
+/**
+ * Canonical store for a marketing page and an application page that share one HTTPS origin.
+ *
+ * Both documents must call this helper with the same namespace. Cache Storage is origin-scoped,
+ * so this intentionally cannot create cross-origin or cross-site sharing. A full-page navigation
+ * still initializes a new JavaScript/Wasm runtime; this helper only preserves already verified
+ * bytes so the destination coordinator can reuse them instead of fetching them again.
+ */
+export function createSameOriginNavigationStore({
+  storage = globalThis.caches,
+  origin = globalThis.location?.origin,
+  namespace = SHARED_NAVIGATION_CACHE_NAMESPACE,
+  maxEntryBytes = 64 * 1024 * 1024,
+  maxEntries = 32,
+} = {}) {
+  return new CacheStorageStore(storage, origin, namespace, maxEntryBytes, maxEntries);
 }

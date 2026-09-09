@@ -131,7 +131,26 @@ for (const name of fixtureNames) {
   const parsed = loaderContract.parseRelease(input, origins, loaderContract.releaseSchema);
   requireCondition(Object.isFrozen(parsed), `${name}: parsed release snapshot is mutable`);
   requireCondition(loaderContract.releaseKey(parsed) === `${parsed.appId}@${parsed.release}`, `${name}: release key drifted`);
-  fixtureResults.push({ name, appId: parsed.appId, release: parsed.release, runtime: parsed.runtime });
+  fixtureResults.push({
+    name,
+    appId: parsed.appId,
+    release: parsed.release,
+    runtime: parsed.runtime,
+    framework: parsed.framework ?? 'none',
+  });
+}
+
+// TJSV proves the authored TypeSpec and JSON Schema authorities agree structurally. These
+// fixtures prove that the admitted contract actually crosses every loader runtime/framework
+// boundary the browser package claims to support, instead of stopping at generated source files.
+const runtimeFrameworks = sorted(new Set(fixtureResults.map(({ runtime, framework }) => `${runtime}:${framework}`)));
+for (const required of [
+  'raw-wasm:none',
+  'wasm-bindgen:leptos',
+  'wasm-bindgen:dioxus',
+  'flutter-web:flutter',
+]) {
+  requireCondition(runtimeFrameworks.includes(required), `admitted fixture corpus omitted runtime/framework boundary ${required}`);
 }
 
 const contractSource = await readFile(resolve(root, 'src/contract.mjs'), 'utf8');
@@ -140,7 +159,7 @@ requireCondition(!contractSource.includes('CURRENT_SCHEMA_VERSION ='), 'browser 
 requireCondition(!contractSource.includes('"$defs"'), 'browser loader embedded a second JSON Schema authority');
 
 const receipt = {
-  schema: 'ores-wasm-loaders.web-loader-contract-ir-consumer/v2',
+  schema: 'ores-wasm-loaders.web-loader-contract-ir-consumer/v3',
   status: 'passed',
   admissible: true,
   loaderCommit: process.env.GITHUB_SHA ?? null,
@@ -151,6 +170,7 @@ const receipt = {
   projectionReceiptId: projectionReceipt.receiptId,
   declarations: contractIr.declarations.length,
   projections: projectionReceipt.projections.map(({ language, sourceSha256 }) => ({ language, sourceSha256 })),
+  runtimeFrameworks,
   fixtures: fixtureResults,
 };
 await writeFile(resolve(evidenceDir, 'consumer-verification.json'), `${JSON.stringify(receipt, null, 2)}\n`);
