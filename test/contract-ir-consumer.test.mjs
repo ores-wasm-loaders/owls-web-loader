@@ -3,20 +3,32 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
-const interfacesRef = 'f8fc1873c1b402c04f67dbf62f89b3691ba300fe';
-const validatorRef = '3171025cbe03a7026a71ce94eea18c910e1431b2';
+
+function exactRef(workflow, name) {
+  const match = workflow.match(new RegExp(`^\\s*${name}:\\s*([0-9a-f]{40})\\s*$`, 'm'));
+  assert.ok(match, `${name} must be a full immutable commit SHA`);
+  return match[1];
+}
 
 test('the consumer workflow pins the admitted multi-language contract and its verifier', async () => {
   const workflow = await readFile(new URL('.github/workflows/contract-ir-consumer.yml', root), 'utf8');
-  assert.ok(workflow.includes(`OWLS_INTERFACES_REF: ${interfacesRef}`));
-  assert.ok(workflow.includes(`TSJSV_REF: ${validatorRef}`));
-  assert.ok(workflow.includes(`ref: ${interfacesRef}`));
-  assert.ok(workflow.includes(`ref: ${validatorRef}`));
+  const interfacesRef = exactRef(workflow, 'OWLS_INTERFACES_REF');
+  const validatorRef = exactRef(workflow, 'TSJSV_REF');
+
+  assert.notEqual(interfacesRef, validatorRef, 'interface and validator source closures are distinct');
+  assert.match(workflow, /ref:\s*\$\{\{ env\.OWLS_INTERFACES_REF \}\}/);
+  assert.match(workflow, /ref:\s*\$\{\{ env\.TSJSV_REF \}\}/);
+  assert.match(workflow, /git -C \.tools\/owls-interfaces rev-parse HEAD/);
+  assert.match(workflow, /git -C \.tools\/typespec-json-schema-validator rev-parse HEAD/);
   assert.match(workflow, /--contract-ir=\.contract-ir-consumer\/contract-ir\.json/);
   assert.match(workflow, /check-language-projections\.mjs/);
   assert.match(workflow, /projection-receipt\.json/);
   assert.match(workflow, /node scripts\/verify-contract-ir-consumer\.mjs/);
   assert.match(workflow, /include-hidden-files:\s*true/);
+  assert.doesNotMatch(
+    workflow,
+    /repository:\s*ORESoftware\/typespec-json-schema-validator[\s\S]{0,200}?ref:\s*(?:main|master|v\d+)/,
+  );
 });
 
 test('the browser loader verifies IR, five-language projections, and direct contract delegation', async () => {
