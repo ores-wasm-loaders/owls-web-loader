@@ -7,7 +7,18 @@ export { FlutterAdapter, mountFlutterView, startupVariant } from './src/flutter.
 export { hintDescriptors, addHints, prepareOnIntent, prepareWhenIdle, addPrerenderRule } from './src/hints.mjs';
 export { createWebViewBridge } from './src/webview.mjs';
 export { installMarketingIntentLoader } from './src/marketing.mjs';
-export { LoaderError, parseRelease, releaseSchema, preparableAssets, chunkForRoute, assetKey, releaseKey } from './src/contract.mjs';
+export {
+  LoaderError,
+  parseRelease,
+  releaseSchema,
+  preparableAssets,
+  dependencyClosure,
+  dependencyClosureForRoute,
+  chunkForRoute,
+  assetKey,
+  releaseKey,
+} from './src/contract.mjs';
+export { prefetchRoute } from './src/routes.mjs';
 export { ActivationHost } from './src/ownership.mjs';
 export { pilotPolicy, connectApplicationLink } from './src/pilot.mjs';
 export { createLoaderReporter } from './src/telemetry.mjs';
