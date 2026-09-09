@@ -2,10 +2,12 @@ name: test
 on:
   pull_request:
   push:
-    branches: [main, feat/wl-05-wt-06-pilot-lifecycle-20260906]
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  OWLS_INTERFACES_REF: 76364a23364993ff4be1ed82a4978725ed6f811c
 jobs:
   node:
     runs-on: ubuntu-24.04
@@ -18,7 +20,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: f8fc1873c1b402c04f67dbf62f89b3691ba300fe
+          ref: ${{ env.OWLS_INTERFACES_REF }}
           path: owls-interfaces
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -29,6 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p evidence
+          test "$(git -C owls-interfaces rev-parse HEAD)" = "$OWLS_INTERFACES_REF"
           { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
           tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
           sha256sum evidence/source.tar.gz > evidence/source.sha256
