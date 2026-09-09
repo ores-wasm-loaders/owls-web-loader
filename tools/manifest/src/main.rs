@@ -61,7 +61,9 @@ fn route_key(s: &str) -> bool {
         && !s
             .bytes()
             .any(|b| b.is_ascii_whitespace() || b.is_ascii_control() || b"?#".contains(&b))
-        && s.split('/').skip(1).all(|segment| segment != "." && segment != "..")
+        && s.split('/')
+            .skip(1)
+            .all(|segment| segment != "." && segment != "..")
 }
 fn chunk_id(path: &str) -> String {
     format!("chunk-{:x}", Sha256::digest(path.as_bytes()))
@@ -150,9 +152,20 @@ fn validate_dependency_graph(graph: &BTreeMap<String, Vec<String>>) -> Result<()
     }
     Ok(())
 }
-fn validate_split_path(path: &str, expected_wasm: &str, paths: &[String], label: &str) -> Result<()> {
-    if !safe_path(path) || !path.ends_with(".wasm") || path == expected_wasm || !paths.contains(&path.to_string()) {
-        return Err(format!("{label} must name an actual emitted split Wasm file"));
+fn validate_split_path(
+    path: &str,
+    expected_wasm: &str,
+    paths: &[String],
+    label: &str,
+) -> Result<()> {
+    if !safe_path(path)
+        || !path.ends_with(".wasm")
+        || path == expected_wasm
+        || !paths.contains(&path.to_string())
+    {
+        return Err(format!(
+            "{label} must name an actual emitted split Wasm file"
+        ));
     }
     Ok(())
 }
@@ -173,7 +186,9 @@ fn build(recipe: &Recipe) -> Result<Value> {
         _ => return Err("framework is incompatible with build runtime".into()),
     };
     if framework == "leptos"
-        && (recipe.islands.is_empty() || !recipe.routes.is_empty() || !recipe.dependencies.is_empty())
+        && (recipe.islands.is_empty()
+            || !recipe.routes.is_empty()
+            || !recipe.dependencies.is_empty())
     {
         return Err("Leptos build must declare islands and no Dioxus routes/dependencies".into());
     }
@@ -181,7 +196,9 @@ fn build(recipe: &Recipe) -> Result<Value> {
         return Err("Dioxus build must declare routes and no Leptos islands".into());
     }
     if framework == "flutter"
-        && (!recipe.islands.is_empty() || !recipe.routes.is_empty() || !recipe.dependencies.is_empty())
+        && (!recipe.islands.is_empty()
+            || !recipe.routes.is_empty()
+            || !recipe.dependencies.is_empty())
     {
         return Err("Flutter build cannot declare Rust framework activation metadata".into());
     }
@@ -197,7 +214,11 @@ fn build(recipe: &Recipe) -> Result<Value> {
     {
         return Err("canonical credentialless HTTPS base required".into());
     }
-    if !base.path().split('/').any(|segment| segment == recipe.release) {
+    if !base
+        .path()
+        .split('/')
+        .any(|segment| segment == recipe.release)
+    {
         return Err("release must be an immutable path segment".into());
     }
     if fs::symlink_metadata(&recipe.root)
@@ -242,7 +263,9 @@ fn build(recipe: &Recipe) -> Result<Value> {
     for (source, dependencies) in &recipe.dependencies {
         validate_split_path(source, &expected_wasm, &paths, "Dioxus dependency source")?;
         if dependencies.len() > 64 {
-            return Err(format!("Dioxus dependency source {source} exceeds 64 dependencies"));
+            return Err(format!(
+                "Dioxus dependency source {source} exceeds 64 dependencies"
+            ));
         }
         let mut unique = BTreeSet::new();
         for dependency in dependencies {
@@ -253,10 +276,14 @@ fn build(recipe: &Recipe) -> Result<Value> {
                 "Dioxus dependency target",
             )?;
             if dependency == source {
-                return Err(format!("Dioxus split file {source} cannot depend on itself"));
+                return Err(format!(
+                    "Dioxus split file {source} cannot depend on itself"
+                ));
             }
             if !unique.insert(dependency.clone()) {
-                return Err(format!("Dioxus split file {source} repeats dependency {dependency}"));
+                return Err(format!(
+                    "Dioxus split file {source} repeats dependency {dependency}"
+                ));
             }
             inbound.insert(dependency.clone());
             split_paths.insert(dependency.clone());
@@ -293,7 +320,13 @@ fn build(recipe: &Recipe) -> Result<Value> {
         }
         let (id, role, kind, prepare, stage) = if *path == recipe.entrypoint {
             if recipe.runtime == "flutter-web" {
-                ("bootstrap".to_string(), "bootstrap", "script", true, "optional")
+                (
+                    "bootstrap".to_string(),
+                    "bootstrap",
+                    "script",
+                    true,
+                    "optional",
+                )
             } else {
                 ("glue".to_string(), "glue", "module", true, "optional")
             }
@@ -442,7 +475,15 @@ mod tests {
     }
     #[test]
     fn route_keys_are_bounded_and_navigation_safe() {
-        for s in ["", "app", "/a?token=x", "/a#frag", "/../admin", "/a/../b", "/a b"] {
+        for s in [
+            "",
+            "app",
+            "/a?token=x",
+            "/a#frag",
+            "/../admin",
+            "/a/../b",
+            "/a b",
+        ] {
             assert!(!route_key(s), "{s}");
         }
         assert!(route_key("/app/reports"));
@@ -501,7 +542,8 @@ mod tests {
     }
     #[test]
     fn dioxus_routes_emit_real_dependency_closures() {
-        let root = std::env::temp_dir().join(format!("owls-dioxus-manifest-test-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("owls-dioxus-manifest-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("split")).unwrap();
         fs::write(root.join("app.js"), b"export default function init() {}").unwrap();
@@ -510,7 +552,8 @@ mod tests {
         write_wasm(root.join("split/module_0_routeReports.wasm"));
         let mut r = recipe(root.clone(), "wasm-bindgen", "app.js");
         r.framework = Some("dioxus".into());
-        r.routes.insert("/reports".into(), "split/module_0_routeReports.wasm".into());
+        r.routes
+            .insert("/reports".into(), "split/module_0_routeReports.wasm".into());
         r.dependencies.insert(
             "split/module_0_routeReports.wasm".into(),
             vec!["split/chunk_0_split.wasm".into()],
@@ -545,7 +588,10 @@ mod tests {
     }
     #[test]
     fn dioxus_dependency_graph_failures_are_fatal() {
-        let root = std::env::temp_dir().join(format!("owls-dioxus-dependency-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "owls-dioxus-dependency-test-{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("split")).unwrap();
         fs::write(root.join("app.js"), b"export default function init() {}").unwrap();
@@ -560,8 +606,12 @@ mod tests {
         let mut missing = recipe(root.clone(), "wasm-bindgen", "app.js");
         missing.framework = Some("dioxus".into());
         missing.routes = base.routes.clone();
-        missing.dependencies.insert("split/a.wasm".into(), vec!["split/missing.wasm".into()]);
-        assert!(build(&missing).unwrap_err().contains("actual emitted split Wasm file"));
+        missing
+            .dependencies
+            .insert("split/a.wasm".into(), vec!["split/missing.wasm".into()]);
+        assert!(build(&missing)
+            .unwrap_err()
+            .contains("actual emitted split Wasm file"));
 
         let mut duplicate = recipe(root.clone(), "wasm-bindgen", "app.js");
         duplicate.framework = Some("dioxus".into());
@@ -570,31 +620,49 @@ mod tests {
             "split/a.wasm".into(),
             vec!["split/b.wasm".into(), "split/b.wasm".into()],
         );
-        assert!(build(&duplicate).unwrap_err().contains("repeats dependency"));
+        assert!(build(&duplicate)
+            .unwrap_err()
+            .contains("repeats dependency"));
 
         let mut self_edge = recipe(root.clone(), "wasm-bindgen", "app.js");
         self_edge.framework = Some("dioxus".into());
         self_edge.routes = base.routes.clone();
-        self_edge.dependencies.insert("split/a.wasm".into(), vec!["split/a.wasm".into()]);
-        assert!(build(&self_edge).unwrap_err().contains("cannot depend on itself"));
+        self_edge
+            .dependencies
+            .insert("split/a.wasm".into(), vec!["split/a.wasm".into()]);
+        assert!(build(&self_edge)
+            .unwrap_err()
+            .contains("cannot depend on itself"));
 
         let mut cycle = recipe(root.clone(), "wasm-bindgen", "app.js");
         cycle.framework = Some("dioxus".into());
         cycle.routes = base.routes.clone();
-        cycle.dependencies.insert("split/a.wasm".into(), vec!["split/b.wasm".into()]);
-        cycle.dependencies.insert("split/b.wasm".into(), vec!["split/a.wasm".into()]);
+        cycle
+            .dependencies
+            .insert("split/a.wasm".into(), vec!["split/b.wasm".into()]);
+        cycle
+            .dependencies
+            .insert("split/b.wasm".into(), vec!["split/a.wasm".into()]);
         assert!(build(&cycle).unwrap_err().contains("dependency cycle"));
 
         let mut unreachable = recipe(root.clone(), "wasm-bindgen", "app.js");
         unreachable.framework = Some("dioxus".into());
         unreachable.routes = base.routes.clone();
-        unreachable.dependencies.insert("split/c.wasm".into(), Vec::new());
-        assert!(build(&unreachable).unwrap_err().contains("not reachable from any declared route"));
+        unreachable
+            .dependencies
+            .insert("split/c.wasm".into(), Vec::new());
+        assert!(build(&unreachable)
+            .unwrap_err()
+            .contains("not reachable from any declared route"));
 
         let mut leptos = recipe(root.clone(), "wasm-bindgen", "app.js");
         leptos.islands = vec!["Pilot".into()];
-        leptos.dependencies.insert("split/a.wasm".into(), vec!["split/b.wasm".into()]);
-        assert!(build(&leptos).unwrap_err().contains("no Dioxus routes/dependencies"));
+        leptos
+            .dependencies
+            .insert("split/a.wasm".into(), vec!["split/b.wasm".into()]);
+        assert!(build(&leptos)
+            .unwrap_err()
+            .contains("no Dioxus routes/dependencies"));
         fs::remove_dir_all(root).unwrap();
     }
 }
