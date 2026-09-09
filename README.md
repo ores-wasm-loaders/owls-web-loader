@@ -77,6 +77,32 @@ shell (for Flutter, one engine with embedded multi-view), not a claim that navig
 runtime along. `addPrerenderRule` is the honest alternative: it prepares the destination's own
 document.
 
+## Same-origin navigation warming
+
+For a marketing page and application page on the **same HTTPS origin**, use the canonical
+Cache Storage helper in both documents. It gives them the same versioned namespace, so the
+application's new `Coordinator` can reuse bytes that the marketing page already fetched and
+verified. It does not register a service worker, intercept requests, or preserve a live
+JavaScript/Wasm runtime across navigation.
+
+```js
+import {
+  Coordinator,
+  browserPolicy,
+  createSameOriginNavigationStore,
+} from '/vendor/owls/owls-web-loader/index.mjs';
+
+const policy = browserPolicy(['https://assets.example.com']);
+const store = createSameOriginNavigationStore();
+const coordinator = new Coordinator(policy, { store });
+```
+
+Both pages must use the same cache namespace and immutable release manifest. `assetKey` binds a
+cached entry to its canonical URL plus SHA-256, and every cache hit is checked against the
+manifest again before use. Different origins — including separate application subdomains — do
+not share this store. Cross-origin or cross-site fleet reuse must therefore be treated as a
+browser/CDN deployment concern, not as a global OWLS cache.
+
 ## Integrity
 
 Every asset is fetched credentialless, redirect-less and size-capped, then checked against the
@@ -96,6 +122,16 @@ execute anything the release did not describe.
 
 The generated glue is part of a release and is never swapped between apps: this package wraps
 the lifecycle, it does not replace the glue.
+
+## Contract admission
+
+`owls-interfaces` owns independently authored TypeSpec and JSON Schema authorities. CI pins an
+exact `ORESoftware/typespec-json-schema-validator` revision, generates comparison-only Schema B,
+requires parity, emits Contract IR, verifies the Contract IR against the current source closure,
+and binds the TypeScript, Rust, Dart, Go, and Gleam projections to the admitted IR. The browser
+loader then consumes that exact admitted interface revision and requires fixture evidence for
+raw Wasm, Leptos, Dioxus, and Flutter runtime/framework boundaries. Neither generated Schema B
+nor Contract IR becomes an editable authority.
 
 ## No runtime build step
 
@@ -124,13 +160,24 @@ runtime, so failed or skipped preparation falls through to ordinary navigation.
 </a>
 <script type="module">
   globalThis.__OWLS_INTERFACES_URL__ = '/vendor/owls/owls-interfaces/index.mjs';
-  const { Coordinator, browserPolicy, installMarketingIntentLoader } = await import(
-    '/vendor/owls/owls-web-loader/index.mjs'
+  const {
+    Coordinator,
+    browserPolicy,
+    createSameOriginNavigationStore,
+    installMarketingIntentLoader,
+  } = await import('/vendor/owls/owls-web-loader/index.mjs');
+  const coordinator = new Coordinator(
+    browserPolicy(['https://assets.example.com']),
+    { store: createSameOriginNavigationStore() },
   );
-  const coordinator = new Coordinator(browserPolicy(['https://assets.example.com']));
   installMarketingIntentLoader({ coordinator });
 </script>
 ```
+
+The cache helper in this example only provides cross-navigation byte reuse when the marketing
+and destination documents share one HTTPS origin. If `https://app.example.com/` is a different
+origin from the marketing page, the integration still performs safe best-effort preparation,
+but the destination must not assume access to the marketing document's Cache Storage.
 
 Use `data-owls-variant="fallback"` only when a Flutter destination has deliberately selected its
 JavaScript fallback. The default is `module`, so a marketing page does not fetch both startup
