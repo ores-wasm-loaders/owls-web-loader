@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 env:
-  OWLS_INTERFACES_REF: 76364a23364993ff4be1ed82a4978725ed6f811c
+  OWLS_INTERFACES_REF: cfe0b18fe9ae361d94ea0646627cb732465b5496
 jobs:
   node:
     runs-on: ubuntu-24.04
