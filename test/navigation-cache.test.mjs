@@ -87,8 +87,8 @@ test('navigation stores remain isolated by origin even with one backing test sto
 
 test('same-origin helper fails closed when Cache Storage or a canonical HTTPS origin is unavailable', () => {
   for (const options of [
-    { storage: undefined, origin: ORIGIN },
-    { storage: new FakeCacheStorage(), origin: undefined },
+    { storage: null, origin: ORIGIN },
+    { storage: new FakeCacheStorage(), origin: '' },
     { storage: new FakeCacheStorage(), origin: 'http://app.example.test' },
     { storage: new FakeCacheStorage(), origin: 'not a url' },
     { storage: new FakeCacheStorage(), origin: 'https://app.example.test/' },
