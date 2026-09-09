@@ -1,12 +1,29 @@
 import type {ByteStore} from "./transport.js";
 import {LoaderError} from "./manifest.js";
+
 /** Origin-scoped, opt-in persistent bytes. This does not register a service worker or intercept requests. */
+export const SHARED_NAVIGATION_CACHE_NAMESPACE = "owls-navigation-v1";
+
+function isCanonicalHttpsOrigin(origin: unknown): origin is string {
+  if (typeof origin !== "string" || origin.length === 0) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "https:" && parsed.origin === origin && parsed.href === origin + "/";
+  } catch {
+    return false;
+  }
+}
+
+function isCacheStorage(storage: unknown): storage is CacheStorage {
+  return storage !== null && typeof storage === "object" && typeof (storage as CacheStorage).open === "function";
+}
+
 export class CacheStorageStore implements ByteStore {
   private readonly cache: Promise<Cache>;
   constructor(storage: CacheStorage, readonly origin: string, readonly namespace: string,
     readonly maxEntryBytes = 64*1024*1024, readonly maxEntries = 32) {
-    if (!/^owls-[a-z0-9-]+$/.test(namespace) || new URL(origin).origin !== origin ||
-        !origin.startsWith("https://") || !Number.isSafeInteger(maxEntryBytes) || maxEntryBytes < 1 ||
+    if (!isCacheStorage(storage) || !/^owls-[a-z0-9-]+$/.test(namespace) || !isCanonicalHttpsOrigin(origin) ||
+        !Number.isSafeInteger(maxEntryBytes) || maxEntryBytes < 1 ||
         !Number.isSafeInteger(maxEntries) || maxEntries < 1)
       throw new LoaderError("cache","Invalid cache configuration");
     this.cache = storage.open(namespace);
@@ -36,3 +53,24 @@ export class CacheStorageStore implements ByteStore {
   async delete(key:string){await (await this.cache).delete(await this.request(key));}
 }
 
+export interface SameOriginNavigationStoreOptions {
+  storage?: CacheStorage;
+  origin?: string;
+  namespace?: string;
+  maxEntryBytes?: number;
+  maxEntries?: number;
+}
+
+/**
+ * Canonical persistent store for marketing and application documents on one HTTPS origin.
+ * Cache Storage remains origin-scoped; this shares verified bytes, never a live runtime.
+ */
+export function createSameOriginNavigationStore({
+  storage = globalThis.caches,
+  origin = globalThis.location?.origin,
+  namespace = SHARED_NAVIGATION_CACHE_NAMESPACE,
+  maxEntryBytes = 64*1024*1024,
+  maxEntries = 32,
+}: SameOriginNavigationStoreOptions = {}) {
+  return new CacheStorageStore(storage, origin, namespace, maxEntryBytes, maxEntries);
+}
