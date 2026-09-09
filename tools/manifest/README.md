@@ -11,14 +11,23 @@ activation metadata, and `toolchain`. The base URL must contain the exact immuta
 as a path segment. Runtime is `wasm-bindgen` or `flutter-web`.
 
 For backward compatibility a `wasm-bindgen` recipe with no `framework` remains a Leptos
-islands recipe. Leptos must declare its actual exported `islands` and no route map. Flutter
-may omit `framework` or declare `flutter` and must not declare Rust activation metadata.
+islands recipe. Leptos must declare its actual exported `islands` and no route/dependency
+map. Flutter may omit `framework` or declare `flutter` and must not declare Rust activation
+metadata.
+
 Dioxus must declare `framework: "dioxus"` and a non-empty `routes` object whose keys are
 canonical route paths and whose values are relative paths to actual emitted split `.wasm`
-files beneath `root`. Every Dioxus route chunk must physically exist, must be distinct from
-the main wasm-bindgen companion, and is emitted as a stable `role: "chunk"` asset. The
-manifest route map contains the resulting immutable asset IDs, not mutable filesystem paths.
-Missing, unsafe, non-Wasm, or undeclared route outputs are rejected rather than guessed.
+files beneath `root`. A Dioxus producer may also provide a `dependencies` object mapping
+an emitted split-Wasm path to the emitted split-Wasm paths it depends on. These are build
+paths, not public asset IDs. The manifest tool validates their files, bounds each dependency
+list to 64 entries, rejects duplicates/self-edges/missing files/cycles/disconnected roots,
+and then translates every participating path into a deterministic immutable asset ID.
+
+Every route-owned module and shared dependency is emitted as `role: "chunk"`, `kind:
+"wasm"`, `stage: "lazy"`, `prepare: false`. The route-owned asset receives its dependency
+asset IDs in `dependencies`; the manifest route map also contains asset IDs rather than
+mutable filesystem paths. Missing, unsafe, non-Wasm, cyclic, or unrelated split outputs are
+rejected rather than guessed.
 
 Example Dioxus recipe shape:
 
@@ -32,7 +41,12 @@ Example Dioxus recipe shape:
   "framework": "dioxus",
   "entrypoint": "app.js",
   "routes": {
-    "/app/reports": "chunks/reports.wasm"
+    "/child": "split/module_0_routeChildSplit_a1b2c3.wasm"
+  },
+  "dependencies": {
+    "split/module_0_routeChildSplit_a1b2c3.wasm": [
+      "split/chunk_0_split.wasm"
+    ]
   },
   "toolchain": {
     "dioxus": "0.7.9"
@@ -40,9 +54,15 @@ Example Dioxus recipe shape:
 }
 ```
 
+The producer supplying `routes` and `dependencies` must derive them from the exact framework
+build evidence. For Dioxus 0.7.x, the external acceptance lane parses the generated
+`__wasm_split.js`: route-owned `module_*` URLs identify split modules and their referenced
+`__wasm_split_load_chunk_*` loader symbols identify shared `chunk_*` prerequisites. Do not
+infer dependency edges from filename order, file size, or a source-level guess.
+
 Wasm companions must physically exist. Recipe/manifest validation failures are fatal. The
-route metadata is build evidence only; Dioxus remains responsible for its actual split
-runtime and routing semantics. OWLS never rewrites framework output or substitutes one
+route/dependency metadata is build evidence only; Dioxus remains responsible for its actual
+split runtime and routing semantics. OWLS never rewrites framework output or substitutes one
 application's wasm-bindgen glue for another's.
 
 Only static output with approved extensions is inventoried. Unknown extensions are
@@ -54,18 +74,20 @@ accept an ad-hoc config field. Asset count, nonzero size and per-asset byte limi
 checked before admitting the build. Zero-byte disabled service-worker placeholders
 must be removed by an explicit no-PWA staging step, not admitted as executable assets.
 
-Bootstrap/glue and application Wasm are optional preparation candidates, not an assertion
-that they fit a 1 MiB policy. Dioxus route chunks are lazy/non-prepared by default so the
-manifest tool does not turn route splitting into eager fleet-wide downloads. Flutter
-renderer/fallback fetching remains SDK-owned.
+Bootstrap/glue and application Wasm are optional ambient preparation candidates, not an
+assertion that they fit a 1 MiB policy. Dioxus split assets are lazy/non-prepared by default
+so manifest generation never turns route splitting into eager fleet-wide downloads. A later
+explicit route-intent operation may fetch the admitted dependency closure, subject to the
+same page/release byte ceilings, without executing application code. Flutter renderer/fallback
+fetching remains SDK-owned.
 
 The release contract remains declared independently in human-authored TypeSpec and
 human-authored JSON Schema. Consumers run `ORESoftware/typespec-json-schema-validator`
-against the pinned authority revisions; generated Schema B, parity receipts, Contract IR,
+against pinned authority revisions; generated Schema B, parity receipts, Contract IR,
 and language projections are comparison/admission evidence only and never overwrite either
 source authority.
 
-The real build's reviewed Cargo.lock is now committed. Run:
+The real build's reviewed Cargo.lock is committed. Run:
 
     cargo +1.94.0 test --locked --manifest-path tools/manifest/Cargo.toml
     cargo +1.94.0 build --locked --release --manifest-path tools/manifest/Cargo.toml
