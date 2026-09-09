@@ -5,11 +5,45 @@ rejects symlinks/hidden paths/noncanonical origins, and emits release-v2 JSON. I
 another loader and does not change either release-schema authority. The consuming job
 must validate its output through the pinned owls-interfaces package before serving it.
 
-There are no CLI flags. Send one UTF-8 JSON object (at most 64 KiB) on stdin with root,
-base_url, app_id, release, runtime, entrypoint, islands and toolchain. The base URL must
-contain the exact immutable release as a path segment. runtime is wasm-bindgen or
-flutter-web. A wasm-bindgen islands build must declare its actual exported island names.
-Wasm companions must physically exist. Recipe/manifest validation failures are fatal.
+There are no CLI flags. Send one UTF-8 JSON object (at most 64 KiB) on stdin with `root`,
+`base_url`, `app_id`, `release`, `runtime`, `entrypoint`, optional `framework`, framework
+activation metadata, and `toolchain`. The base URL must contain the exact immutable release
+as a path segment. Runtime is `wasm-bindgen` or `flutter-web`.
+
+For backward compatibility a `wasm-bindgen` recipe with no `framework` remains a Leptos
+islands recipe. Leptos must declare its actual exported `islands` and no route map. Flutter
+may omit `framework` or declare `flutter` and must not declare Rust activation metadata.
+Dioxus must declare `framework: "dioxus"` and a non-empty `routes` object whose keys are
+canonical route paths and whose values are relative paths to actual emitted split `.wasm`
+files beneath `root`. Every Dioxus route chunk must physically exist, must be distinct from
+the main wasm-bindgen companion, and is emitted as a stable `role: "chunk"` asset. The
+manifest route map contains the resulting immutable asset IDs, not mutable filesystem paths.
+Missing, unsafe, non-Wasm, or undeclared route outputs are rejected rather than guessed.
+
+Example Dioxus recipe shape:
+
+```json
+{
+  "root": "dist/public",
+  "base_url": "https://app.example/releases/r1/",
+  "app_id": "example-web",
+  "release": "r1",
+  "runtime": "wasm-bindgen",
+  "framework": "dioxus",
+  "entrypoint": "app.js",
+  "routes": {
+    "/app/reports": "chunks/reports.wasm"
+  },
+  "toolchain": {
+    "dioxus": "0.7.9"
+  }
+}
+```
+
+Wasm companions must physically exist. Recipe/manifest validation failures are fatal. The
+route metadata is build evidence only; Dioxus remains responsible for its actual split
+runtime and routing semantics. OWLS never rewrites framework output or substitutes one
+application's wasm-bindgen glue for another's.
 
 Only static output with approved extensions is inventoried. Unknown extensions are
 omitted; source maps, keys and hidden files are never included. Build input is trusted
@@ -21,7 +55,15 @@ checked before admitting the build. Zero-byte disabled service-worker placeholde
 must be removed by an explicit no-PWA staging step, not admitted as executable assets.
 
 Bootstrap/glue and application Wasm are optional preparation candidates, not an assertion
-that they fit a 1 MiB policy. Flutter renderer/fallback fetching remains SDK-owned.
+that they fit a 1 MiB policy. Dioxus route chunks are lazy/non-prepared by default so the
+manifest tool does not turn route splitting into eager fleet-wide downloads. Flutter
+renderer/fallback fetching remains SDK-owned.
+
+The release contract remains declared independently in human-authored TypeSpec and
+human-authored JSON Schema. Consumers run `ORESoftware/typespec-json-schema-validator`
+against the pinned authority revisions; generated Schema B, parity receipts, Contract IR,
+and language projections are comparison/admission evidence only and never overwrite either
+source authority.
 
 The real build's reviewed Cargo.lock is now committed. Run:
 
