@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OWLS_INTERFACES_REF: 1c3b29f1c43f9f38f637106e3ff601620df4a572
+  OWLS_INTERFACES_REF: 12a862ce38ea5632a6fb280d1fb61412c8feb8d0
   TSJSV_REF: 03ccc0ecdfc70f9198c3ccf80718910961d3fde1
 
 jobs:
