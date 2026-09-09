@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ores-wasm-loaders/owls-interfaces
-          ref: 231510f5d01046af657be42a5d4215be12622042
+          ref: cfe0b18fe9ae361d94ea0646627cb732465b5496
           path: owls-interfaces
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -56,10 +56,12 @@ jobs:
           const contract = await import(globalThis.__OWLS_INTERFACES_URL__);
           const loader = await import(pathToFileURL(join(root,'owls-web-loader','index.mjs')).href);
           assert.equal(typeof contract.parseRelease, 'function');
+          assert.equal(typeof contract.dependencyClosureForRoute, 'function');
           assert.equal(typeof loader.Coordinator, 'function');
+          assert.equal(typeof loader.prefetchRoute, 'function');
           assert.equal(typeof loader.ActivationHost, 'function');
           assert.equal(typeof loader.connectApplicationLink, 'function');
-          console.log('PASS: real Zed archives, frozen independent copy, installed contract/coordinator/lifecycle/link exports');
+          console.log('PASS: real Zed archives, frozen independent copy, installed contract/coordinator/route-DAG/lifecycle/link exports');
           console.log('Scope: isolated registry round-trip; not remote production-registry publication');
           NODE
           cp "$CONSUMER/.zpkg.lock" "$EVIDENCE/consumer.zpkg.lock"
