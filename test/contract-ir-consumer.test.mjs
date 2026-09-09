@@ -3,6 +3,31 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
+const expectedDeclarations = Object.freeze([
+  'Ores.WasmLoaders.Activation',
+  'Ores.WasmLoaders.ActivationMode',
+  'Ores.WasmLoaders.ApplicationId',
+  'Ores.WasmLoaders.Asset',
+  'Ores.WasmLoaders.AssetId',
+  'Ores.WasmLoaders.AssetKind',
+  'Ores.WasmLoaders.AssetRole',
+  'Ores.WasmLoaders.AssetStage',
+  'Ores.WasmLoaders.EntrypointId',
+  'Ores.WasmLoaders.FrameworkKind',
+  'Ores.WasmLoaders.HostSelector',
+  'Ores.WasmLoaders.HttpsAssetUrl',
+  'Ores.WasmLoaders.IslandName',
+  'Ores.WasmLoaders.PrepareBudget',
+  'Ores.WasmLoaders.PrepareStage',
+  'Ores.WasmLoaders.RecordString',
+  'Ores.WasmLoaders.RecordUnknown',
+  'Ores.WasmLoaders.Release',
+  'Ores.WasmLoaders.ReleaseId',
+  'Ores.WasmLoaders.RuntimeKind',
+  'Ores.WasmLoaders.SchemaVersion',
+  'Ores.WasmLoaders.Sha256Hex',
+  'Ores.WasmLoaders.ToolchainId',
+]);
 
 function exactRef(workflow, name) {
   const match = workflow.match(new RegExp(`^\\s*${name}:\\s*([0-9a-f]{40})\\s*$`, 'm'));
@@ -10,7 +35,7 @@ function exactRef(workflow, name) {
   return match[1];
 }
 
-test('the consumer workflow pins the admitted multi-language contract and its verifier', async () => {
+test('the consumer workflow pins the admitted multi-language contract and its canonical TJSV verifier', async () => {
   const workflow = await readFile(new URL('.github/workflows/contract-ir-consumer.yml', root), 'utf8');
   const interfacesRef = exactRef(workflow, 'OWLS_INTERFACES_REF');
   const validatorRef = exactRef(workflow, 'TSJSV_REF');
@@ -20,15 +45,25 @@ test('the consumer workflow pins the admitted multi-language contract and its ve
   assert.match(workflow, /ref:\s*\$\{\{ env\.TSJSV_REF \}\}/);
   assert.match(workflow, /git -C \.tools\/owls-interfaces rev-parse HEAD/);
   assert.match(workflow, /git -C \.tools\/typespec-json-schema-validator rev-parse HEAD/);
+  assert.match(workflow, /--instances=\.contract-ir-consumer\/instances/);
+  assert.match(workflow, /cp \.tools\/owls-interfaces\/fixtures\/valid\/\*\.json/);
   assert.match(workflow, /--contract-ir=\.contract-ir-consumer\/contract-ir\.json/);
+  assert.match(workflow, /actions\/verify-contract-ir@([0-9a-f]{40})/);
+  const actionRef = workflow.match(/actions\/verify-contract-ir@([0-9a-f]{40})/)?.[1];
+  assert.equal(actionRef, validatorRef, 'canonical downstream verifier must use the audited TJSV revision');
+  assert.match(workflow, /tjsv-consumer-verification\.json/);
   assert.match(workflow, /check-language-projections\.mjs/);
   assert.match(workflow, /projection-receipt\.json/);
   assert.match(workflow, /node scripts\/verify-contract-ir-consumer\.mjs/);
   assert.match(workflow, /include-hidden-files:\s*true/);
+  for (const declaration of expectedDeclarations) {
+    assert.ok(workflow.includes(`"${declaration}"`), `canonical TJSV scope omitted ${declaration}`);
+  }
   assert.doesNotMatch(
     workflow,
     /repository:\s*ORESoftware\/typespec-json-schema-validator[\s\S]{0,200}?ref:\s*(?:main|master|v\d+)/,
   );
+  assert.doesNotMatch(workflow, /actions\/verify-contract-ir@(?:main|master|v\d+)/);
 });
 
 test('the browser loader verifies IR, five-language projections, and direct contract delegation', async () => {
