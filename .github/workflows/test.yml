@@ -63,23 +63,24 @@ jobs:
           rustup toolchain install 1.94.0 --profile minimal --component rustfmt
           rustc +1.94.0 --version
           cargo +1.94.0 --version
-      - name: Capture canonical Rust 1.94 formatting
+      - name: Format, test, and build the locked real-build manifest producer
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p manifest-evidence
-          cargo +1.94.0 fmt --manifest-path tools/manifest/Cargo.toml
-          cp tools/manifest/src/main.rs manifest-evidence/formatted-main.rs
-          git diff -- tools/manifest/src/main.rs > manifest-evidence/rustfmt.patch
-          sha256sum manifest-evidence/formatted-main.rs > manifest-evidence/formatted-main.sha256
-          test -s manifest-evidence/rustfmt.patch
-      - name: Require committed source to already be canonical
-        shell: bash
-        run: git diff --exit-code -- tools/manifest/src/main.rs
+          cargo +1.94.0 fmt --check --manifest-path tools/manifest/Cargo.toml
+          cargo +1.94.0 test --locked --manifest-path tools/manifest/Cargo.toml 2>&1 | tee manifest-evidence/tests.log
+          cargo +1.94.0 build --locked --release --manifest-path tools/manifest/Cargo.toml 2>&1 | tee manifest-evidence/build.log
+          {
+            printf 'loader=%s\n' "$(git rev-parse HEAD)"
+            printf 'rustc=%s\n' "$(rustc +1.94.0 --version)"
+            printf 'cargo=%s\n' "$(cargo +1.94.0 --version)"
+            sha256sum tools/manifest/Cargo.lock tools/manifest/target/release/owls-build-manifest
+          } > manifest-evidence/versions-and-sha256.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: manifest-rustfmt-${{ github.sha }}
+          name: manifest-producer-${{ github.sha }}
           path: manifest-evidence/
           retention-days: 30
           if-no-files-found: error
