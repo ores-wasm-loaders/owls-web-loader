@@ -48,7 +48,6 @@ test('the consumer workflow pins the admitted multi-language contract and its ca
   assert.match(workflow, /--instances=\.contract-ir-consumer\/instances/);
   assert.match(workflow, /cp \.tools\/owls-interfaces\/fixtures\/valid\/\*\.json/);
   assert.match(workflow, /--contract-ir=\.contract-ir-consumer\/contract-ir\.json/);
-  assert.match(workflow, /actions\/verify-contract-ir@([0-9a-f]{40})/);
   const actionRef = workflow.match(/actions\/verify-contract-ir@([0-9a-f]{40})/)?.[1];
   assert.equal(actionRef, validatorRef, 'canonical downstream verifier must use the audited TJSV revision');
   assert.match(workflow, /tjsv-consumer-verification\.json/);
@@ -66,7 +65,7 @@ test('the consumer workflow pins the admitted multi-language contract and its ca
   assert.doesNotMatch(workflow, /actions\/verify-contract-ir@(?:main|master|v\d+)/);
 });
 
-test('the browser loader verifies IR, five-language projections, and direct contract delegation', async () => {
+test('the browser loader verifies IR, five-language projections, runtime fixtures, and direct contract delegation', async () => {
   const verifier = await readFile(new URL('scripts/verify-contract-ir-consumer.mjs', root), 'utf8');
   const contract = await readFile(new URL('src/contract.mjs', root), 'utf8');
 
@@ -78,6 +77,16 @@ test('the browser loader verifies IR, five-language projections, and direct cont
   for (const language of ['typescript', 'rust', 'dart', 'go', 'gleam']) {
     assert.match(verifier, new RegExp(`${language}:`));
   }
+  for (const boundary of [
+    'raw-wasm:none',
+    'wasm-bindgen:leptos',
+    'wasm-bindgen:dioxus',
+    'flutter-web:flutter',
+  ]) {
+    assert.match(verifier, new RegExp(boundary.replace('-', '\\-')));
+  }
+  assert.match(verifier, /runtimeFrameworks/);
+  assert.match(verifier, /web-loader-contract-ir-consumer\/v3/);
   assert.match(verifier, /assertionDigest/);
   assert.match(verifier, /comparison-evidence-only/);
   assert.match(verifier, /independently-authored-authority/);
