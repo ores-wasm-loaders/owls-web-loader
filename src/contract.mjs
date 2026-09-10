@@ -1,4 +1,4 @@
-// Browser- and Node-safe resolution of the shared contract owned by owls-interfaces.
+// Browser- and Node-safe resolution of the shared contracts owned by owls-interfaces.
 //
 // Browser deployments should place owls-interfaces beside owls-web-loader, or set
 // `globalThis.__OWLS_INTERFACES_URL__` before dynamically importing the loader. Node keeps the
@@ -73,4 +73,8 @@ export const {
   releaseKey,
   stageOf,
   roleOf,
+  configSchema,
+  parseOresWasmConfig,
+  configProblems,
+  resolveOresWasmEnv,
 } = interfaces;
