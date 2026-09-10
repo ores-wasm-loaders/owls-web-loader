@@ -1,0 +1,9 @@
+# This repository implements the loader library; it does not consume/activate itself.
+version = 1
+enabled = false
+strict = true
+
+[hosts]
+
+[extensions]
+role = "loader-library"
