@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 env:
-  OWLS_INTERFACES_REF: cfe0b18fe9ae361d94ea0646627cb732465b5496
+  OWLS_INTERFACES_REF: b452399f30fa77c179e56f1ed98ca20dd8ad372b
 jobs:
   node:
     runs-on: ubuntu-24.04
@@ -33,7 +33,7 @@ jobs:
           mkdir -p evidence
           test "$(git -C owls-interfaces rev-parse HEAD)" = "$OWLS_INTERFACES_REF"
           { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
-          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
+          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock .ores-wasm.toml src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/config.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
           sha256sum evidence/source.tar.gz > evidence/source.sha256
       - name: Run all combined regressions and contract tests
         shell: bash

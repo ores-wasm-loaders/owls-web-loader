@@ -1,0 +1,49 @@
+version = 1
+enabled = true
+strict = true
+
+[hosts.browser]
+kind = "browser"
+root = "."
+releaseManifest = "dist/client/release.json"
+allowedOrigins = ["https://cdn.example.com"]
+
+[hosts.browser.prepare]
+trigger = "intent"
+maxBytes = 8388608
+maxConcurrency = 4
+furthestStage = "compile"
+
+[hosts.browser.activation]
+policy = "route"
+
+[hosts.server]
+kind = "ssr"
+root = "."
+releaseManifest = "dist/server/release.json"
+
+[hosts.server.prepare]
+trigger = "explicit"
+maxConcurrency = 2
+furthestStage = "fetch"
+
+[hosts.server.activation]
+policy = "disabled"
+
+[env.prepareMaxBytes]
+env = "ORES_WASM_PREPARE_MAX_BYTES"
+type = "integer"
+target = "hosts.browser.prepare.maxBytes"
+
+[env.assetOrigins]
+env = "ORES_WASM_ALLOWED_ORIGINS"
+type = "array"
+target = "hosts.browser.allowedOrigins"
+
+[env.featureMetadata]
+env = "ORES_WASM_FEATURE_METADATA"
+type = "json"
+target = "extensions.featureMetadata"
+
+[extensions]
+owner = 'platform'

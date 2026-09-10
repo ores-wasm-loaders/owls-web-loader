@@ -1,0 +1,131 @@
+name: config-contract-consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OWLS_INTERFACES_REF: b452399f30fa77c179e56f1ed98ca20dd8ad372b
+  TSJSV_REF: 03ccc0ecdfc70f9198c3ccf80718910961d3fde1
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out loader
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check out exact config-capable interfaces
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ores-wasm-loaders/owls-interfaces
+          ref: ${{ env.OWLS_INTERFACES_REF }}
+          path: .tools/owls-interfaces
+          persist-credentials: false
+      - name: Check out exact TJSV implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ORESoftware/typespec-json-schema-validator
+          ref: ${{ env.TSJSV_REF }}
+          path: .tools/typespec-json-schema-validator
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install verifier lockfile-pinned toolchain
+        working-directory: .tools/typespec-json-schema-validator
+        run: npm ci --omit=dev
+      - name: Verify immutable source closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ref in "$OWLS_INTERFACES_REF" "$TSJSV_REF"; do
+            test "${#ref}" -eq 40
+            case "$ref" in *[!0-9a-f]*) exit 1 ;; esac
+          done
+          test "$(git -C .tools/owls-interfaces rev-parse HEAD)" = "$OWLS_INTERFACES_REF"
+          test "$(git -C .tools/typespec-json-schema-validator rev-parse HEAD)" = "$TSJSV_REF"
+      - name: Stage independent config corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          corpus=.config-contract-consumer/instances/OresWasmConfig/valid
+          mkdir -p "$corpus"
+          cp .tools/owls-interfaces/fixtures/config/valid/*.json "$corpus"/
+          test "$(find "$corpus" -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 2
+      - name: Reproduce config parity receipt and Contract IR
+        run: |
+          set -euo pipefail
+          node .tools/typespec-json-schema-validator/bin/typespec-json-schema-validator.mjs check \
+            --typespec=.tools/owls-interfaces/contracts/config.tsp \
+            --schema=.tools/owls-interfaces/schemas/ores-wasm-config.schema.json \
+            --instances=.config-contract-consumer/instances \
+            --report=.config-contract-consumer/report.json \
+            --contract-ir=.config-contract-consumer/contract-ir.json \
+            --output-dir=.config-contract-consumer/generated \
+            --max-probes=96 \
+            --quiet=true
+      - name: Verify complete config contract scope
+        uses: ORESoftware/typespec-json-schema-validator/actions/verify-contract-ir@03ccc0ecdfc70f9198c3ccf80718910961d3fde1
+        with:
+          contract_ir: .config-contract-consumer/contract-ir.json
+          report: .config-contract-consumer/report.json
+          typespec: .tools/owls-interfaces/contracts/config.tsp
+          schema: .tools/owls-interfaces/schemas/ores-wasm-config.schema.json
+          generated_schema: .config-contract-consumer/generated/typespec.generated.schema.json
+          expected_declarations: >-
+            [
+              "Ores.WasmLoaders.ActivationPolicy",
+              "Ores.WasmLoaders.ConfigActivation",
+              "Ores.WasmLoaders.ConfigExtensions",
+              "Ores.WasmLoaders.ConfigPrepare",
+              "Ores.WasmLoaders.ConfigPrepareStage",
+              "Ores.WasmLoaders.ConfigTarget",
+              "Ores.WasmLoaders.ConfigVersion",
+              "Ores.WasmLoaders.EnvDeclaration",
+              "Ores.WasmLoaders.EnvDeclarationMap",
+              "Ores.WasmLoaders.EnvKey",
+              "Ores.WasmLoaders.EnvValueType",
+              "Ores.WasmLoaders.HostConfig",
+              "Ores.WasmLoaders.HostConfigMap",
+              "Ores.WasmLoaders.HostKind",
+              "Ores.WasmLoaders.OresWasmConfig",
+              "Ores.WasmLoaders.PrepareTrigger",
+              "Ores.WasmLoaders.RepoPath"
+            ]
+          verification: .config-contract-consumer/verification.json
+      - name: Exercise TOML runtime against the admitted interface source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ln -s .tools/owls-interfaces owls-interfaces
+          node --check src/config.mjs
+          node --test test/config.test.mjs
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'loader=%s\n' "$(git rev-parse HEAD)"
+            printf 'interfaces=%s\n' "$(git -C .tools/owls-interfaces rev-parse HEAD)"
+            printf 'validator=%s\n' "$(git -C .tools/typespec-json-schema-validator rev-parse HEAD)"
+            printf 'node=%s\n' "$(node --version)"
+          } > .config-contract-consumer/versions.txt
+          sha256sum .config-contract-consumer/report.json .config-contract-consumer/contract-ir.json .config-contract-consumer/verification.json > .config-contract-consumer/sha256.txt
+      - name: Preserve config consumer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: config-contract-consumer-${{ github.sha }}
+          path: .config-contract-consumer/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
