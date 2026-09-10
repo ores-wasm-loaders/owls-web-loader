@@ -17,7 +17,17 @@ export {
   chunkForRoute,
   assetKey,
   releaseKey,
+  configSchema,
+  parseOresWasmConfig,
+  configProblems,
+  resolveOresWasmEnv,
 } from './src/contract.mjs';
+export {
+  parseOresWasmTomlDocument,
+  parseOresWasmToml,
+  resolveOresWasmToml,
+  loadOresWasmConfig,
+} from './src/config.mjs';
 export { prefetchRoute } from './src/routes.mjs';
 export { ActivationHost } from './src/ownership.mjs';
 export { pilotPolicy, connectApplicationLink } from './src/pilot.mjs';
