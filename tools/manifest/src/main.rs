@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use url::Url;
+mod telemetry;
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Debug, Deserialize)]
@@ -413,6 +414,8 @@ fn build(recipe: &Recipe) -> Result<Value> {
     }))
 }
 fn main() {
+    const ROUTINE_ID: &str = "ores-routine-Rkf7gb3rutiYivmnP62Fc";
+    let log = telemetry::logger();
     let run = || -> Result<()> {
         if std::env::args_os().len() != 1 {
             return Err("no CLI options; pass the documented JSON recipe on stdin".into());
@@ -432,9 +435,25 @@ fn main() {
         );
         Ok(())
     };
-    if let Err(error) = run() {
-        eprintln!("manifest build rejected: {error}");
-        std::process::exit(1);
+    // Records carry the outcome only: rejection messages can echo recipe paths and origins.
+    // Telemetry never changes the exit status, so a failed send is ignored.
+    match run() {
+        Ok(()) => {
+            let _ = log
+                .info(vec![json!("manifest built")])
+                .add_trace("ores-trace-u0TgLlTExI6ipMq67egnG", false)
+                .add_routine_id(ROUTINE_ID)
+                .send();
+        }
+        Err(error) => {
+            let _ = log
+                .error(vec![json!("manifest build rejected")])
+                .add_trace("ores-trace-myvhLEvvImWIKHQaoRq6f", false)
+                .add_routine_id(ROUTINE_ID)
+                .send();
+            eprintln!("manifest build rejected: {error}");
+            std::process::exit(1);
+        }
     }
 }
 #[cfg(test)]
