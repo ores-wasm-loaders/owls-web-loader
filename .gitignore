@@ -8,10 +8,10 @@ coverage/
 .env.*
 .DS_Store
 
+# Repository-local temporary data and authorized Git worktrees.
+# Directory-only forms are required by DEN-3956: a bare `tmp` or `temp` rule
+# would also hide a legitimate file with that name.
 tmp/
 temp/
-# Repository-local temporary data and authorized Git worktrees
-tmp
-temp
 tmp/worktrees
 temp/worktrees
