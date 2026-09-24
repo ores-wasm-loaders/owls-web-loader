@@ -6,7 +6,35 @@
 // override. What is NOT shared is the glue itself — it is generated for one module's imports
 // and belongs to that release; this package wraps the lifecycle, it never substitutes one
 // app's glue for another's.
-import { LoaderError, releaseKey, chunkForRoute, roleOf } from './contract.mjs';
+import {
+  LoaderError,
+  assetKey,
+  dependencyClosure,
+  releaseKey,
+  chunkForRoute,
+  roleOf,
+} from './contract.mjs';
+
+// Compiled modules are immutable and content-addressed. Sharing the compile promise avoids
+// recompiling a common vendor module when several OWLS applications activate in one document.
+// Normal MPA navigation gets network reuse from the Coordinator's CacheStorageStore instead;
+// a WebAssembly.Instance is intentionally never shared across documents.
+const compiledModules = new Map();
+
+async function compileAsset(context, asset, webAssembly) {
+  const key = assetKey(asset);
+  let pending = compiledModules.get(key);
+  if (!pending) {
+    pending = context.bytes(asset.id)
+      .then((bytes) => webAssembly.compile(bytes.slice().buffer))
+      .catch((error) => {
+        compiledModules.delete(key);
+        throw error;
+      });
+    compiledModules.set(key, pending);
+  }
+  return pending;
+}
 
 /** Raw WebAssembly: no glue, no framework, just a module and its imports. */
 export class RawWasmAdapter {
@@ -38,6 +66,89 @@ export class RawWasmAdapter {
     const module = await this.compile(context);
     context.signal.throwIfAborted();
     return WebAssembly.instantiate(module, this.imports);
+  }
+}
+
+/**
+ * Browser-native multi-module WebAssembly composition.
+ *
+ * A release can model stable libraries as `role: "module"` assets and page/user code as
+ * `role: "chunk"` assets whose `dependencies` name those libraries. Dependencies are compiled
+ * and instantiated first. Each direct dependency's exports are injected into its dependent under
+ * an import namespace equal to the dependency asset id by default.
+ *
+ * This is deliberately not an ELF/Emscripten dynamic linker. It uses standard Wasm imports and
+ * exports, so producers must compile module boundaries with matching import namespaces/types.
+ */
+export class ComposedWasmAdapter {
+  #owner;
+
+  constructor({
+    rootAssetId,
+    imports = {},
+    namespaceFor = (dependency) => dependency.id,
+    webAssembly = globalThis.WebAssembly,
+  } = {}) {
+    if (!webAssembly || typeof webAssembly.compile !== 'function' || typeof webAssembly.instantiate !== 'function') {
+      throw new LoaderError('runtime', 'WebAssembly compile/instantiate APIs are unavailable');
+    }
+    if (typeof namespaceFor !== 'function') throw new TypeError('namespaceFor must be a function');
+    this.rootAssetId = rootAssetId;
+    this.imports = imports;
+    this.namespaceFor = namespaceFor;
+    this.webAssembly = webAssembly;
+  }
+
+  async activate(context) {
+    if (context.release.runtime !== 'raw-wasm') {
+      throw new LoaderError('runtime', 'Composed Wasm adapter requires a raw-wasm release');
+    }
+    const key = releaseKey(context.release);
+    if (this.#owner && this.#owner !== key) throw new LoaderError('release-conflict', 'Use a new adapter per release');
+    this.#owner = key;
+
+    const rootAssetId = this.rootAssetId ?? context.release.entrypoint;
+    const closure = dependencyClosure(context.release, rootAssetId);
+    const assets = new Map(context.release.assets.map((asset) => [asset.id, asset]));
+    const instances = new Map();
+
+    for (const asset of closure) {
+      context.signal.throwIfAborted();
+      if (asset.kind !== 'wasm') {
+        throw new LoaderError('asset', `Composed Wasm dependency \`${asset.id}\` must be a wasm asset`);
+      }
+
+      const importObject = { ...this.imports };
+      for (const dependencyId of asset.dependencies ?? []) {
+        const dependency = assets.get(dependencyId);
+        const instance = instances.get(dependencyId);
+        if (!dependency || !instance) {
+          throw new LoaderError('dependency', `Dependency \`${dependencyId}\` was not instantiated before \`${asset.id}\``);
+        }
+        const namespace = this.namespaceFor(dependency, asset, context);
+        if (typeof namespace !== 'string' || namespace.length === 0) {
+          throw new LoaderError('dependency', `Dependency \`${dependencyId}\` resolved to an invalid import namespace`);
+        }
+        if (Object.prototype.hasOwnProperty.call(importObject, namespace)) {
+          throw new LoaderError('dependency', `Import namespace \`${namespace}\` collides with host imports while linking \`${asset.id}\``);
+        }
+        importObject[namespace] = instance.exports;
+      }
+
+      const module = await compileAsset(context, asset, this.webAssembly);
+      context.signal.throwIfAborted();
+      const instance = await this.webAssembly.instantiate(module, importObject);
+      context.signal.throwIfAborted();
+      instances.set(asset.id, instance);
+    }
+
+    const instance = instances.get(rootAssetId);
+    if (!instance) throw new LoaderError('dependency', `Root Wasm asset \`${rootAssetId}\` was not instantiated`);
+    return Object.freeze({
+      rootAssetId,
+      instance,
+      instances,
+    });
   }
 }
 
