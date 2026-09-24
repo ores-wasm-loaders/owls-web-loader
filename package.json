@@ -17,6 +17,6 @@
     "src/**/*.mjs",
     "src/**/*.ts",
     ".zpkg.toml",
-    "docs/pilot-integration.md"
+    "docs/*.md"
   ]
 }
