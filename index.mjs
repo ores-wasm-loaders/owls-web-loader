@@ -2,7 +2,7 @@
 export { Coordinator, browserPolicy } from './src/coordinator.mjs';
 export { httpTransport, MemoryStore, verifyBytes } from './src/transport.mjs';
 export { CacheStorageStore, SHARED_NAVIGATION_CACHE_NAMESPACE, createSameOriginNavigationStore } from './src/cache-storage.mjs';
-export { RawWasmAdapter, BindgenAdapter, LeptosAdapter, DioxusAdapter } from './src/adapters.mjs';
+export { RawWasmAdapter, ComposedWasmAdapter, BindgenAdapter, LeptosAdapter, DioxusAdapter } from './src/adapters.mjs';
 export { FlutterAdapter, mountFlutterView, startupVariant } from './src/flutter.mjs';
 export { hintDescriptors, addHints, prepareOnIntent, prepareWhenIdle, addPrerenderRule } from './src/hints.mjs';
 export { createWebViewBridge } from './src/webview.mjs';
