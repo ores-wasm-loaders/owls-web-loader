@@ -56,6 +56,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Check out the exact admitted release authority
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ores-wasm-loaders/owls-interfaces
+          ref: ${{ env.OWLS_INTERFACES_REF }}
+          path: owls-interfaces
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
       - name: Install exact Rust toolchain
         shell: bash
         run: |
@@ -73,10 +83,71 @@ jobs:
           cargo +1.94.0 build --locked --release --manifest-path tools/manifest/Cargo.toml 2>&1 | tee manifest-evidence/build.log
           {
             printf 'loader=%s\n' "$(git rev-parse HEAD)"
+            printf 'interfaces=%s\n' "$(git -C owls-interfaces rev-parse HEAD)"
             printf 'rustc=%s\n' "$(rustc +1.94.0 --version)"
             printf 'cargo=%s\n' "$(cargo +1.94.0 --version)"
+            printf 'node=%s\n' "$(node --version)"
             sha256sum tools/manifest/Cargo.lock tools/manifest/target/release/owls-build-manifest
           } > manifest-evidence/versions-and-sha256.txt
+      - name: Generate and admit a raw-Wasm MPA split manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURE="$RUNNER_TEMP/owls-raw-wasm-r1"
+          mkdir -p "$FIXTURE"
+          printf '\x00asm\x01\x00\x00\x00' > "$FIXTURE/vendor-core.wasm"
+          printf '\x00asm\x01\x00\x00\x00' > "$FIXTURE/page-home.wasm"
+          printf '\x00asm\x01\x00\x00\x00' > "$FIXTURE/page-settings.wasm"
+          cat > "$FIXTURE/recipe.json" <<JSON
+          {
+            "root": "$FIXTURE",
+            "base_url": "https://assets.example.test/releases/raw-r1/",
+            "app_id": "raw-mpa",
+            "release": "raw-r1",
+            "runtime": "raw-wasm",
+            "framework": "none",
+            "entrypoint": "page-home.wasm",
+            "roots": {
+              "home": "page-home.wasm",
+              "settings": "page-settings.wasm"
+            },
+            "dependencies": {
+              "page-home.wasm": ["vendor-core.wasm"],
+              "page-settings.wasm": ["vendor-core.wasm"]
+            },
+            "asset_ids": {
+              "vendor-core.wasm": "vendor-core",
+              "page-home.wasm": "page-home",
+              "page-settings.wasm": "page-settings"
+            },
+            "toolchain": {"fixture": "ci"}
+          }
+          JSON
+          tools/manifest/target/release/owls-build-manifest \
+            < "$FIXTURE/recipe.json" \
+            > manifest-evidence/raw-wasm-release.json
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { parseRelease } from './owls-interfaces/release.mjs';
+
+          const manifest = JSON.parse(readFileSync('manifest-evidence/raw-wasm-release.json', 'utf8'));
+          const schema = JSON.parse(readFileSync('./owls-interfaces/schemas/release.schema.json', 'utf8'));
+          const admitted = parseRelease(manifest, ['https://assets.example.test'], schema);
+          assert.equal(admitted.runtime, 'raw-wasm');
+          assert.equal(admitted.framework, 'none');
+          assert.equal(admitted.activation.mode, 'run-app');
+          assert.equal(admitted.entrypoint, 'page-home');
+          assert.equal(admitted.extensions.rawWasmRoots.home, 'page-home');
+          assert.equal(admitted.extensions.rawWasmRoots.settings, 'page-settings');
+          const assets = new Map(admitted.assets.map((asset) => [asset.id, asset]));
+          assert.deepEqual(assets.get('page-home').dependencies, ['vendor-core']);
+          assert.deepEqual(assets.get('page-settings').dependencies, ['vendor-core']);
+          assert.equal(assets.get('vendor-core').role, 'module');
+          assert.equal(assets.get('page-home').role, 'chunk');
+          assert.equal(assets.get('page-settings').role, 'chunk');
+          assert.equal(assets.get('page-settings').prepare, false);
+          NODE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -90,9 +90,54 @@ For every asset in the dependency closure, OWLS compiles and instantiates depend
 
 Host imports may not silently shadow a declared dependency namespace. A collision fails activation.
 
+## Build-manifest producer
+
+`owls-build-manifest` can inventory a generic raw-Wasm graph directly. The recipe describes emitted files; the producer does not guess dependencies by disassembling Wasm or by filename ordering.
+
+```json
+{
+  "root": "dist/public",
+  "base_url": "https://assets.example.com/releases/r17/",
+  "app_id": "example",
+  "release": "r17",
+  "runtime": "raw-wasm",
+  "framework": "none",
+  "entrypoint": "page-home.wasm",
+  "roots": {
+    "home": "page-home.wasm",
+    "settings": "page-settings.wasm"
+  },
+  "dependencies": {
+    "page-home.wasm": ["vendor-core.wasm"],
+    "page-settings.wasm": ["vendor-core.wasm"]
+  },
+  "asset_ids": {
+    "vendor-core.wasm": "vendor-core",
+    "page-home.wasm": "page-home",
+    "page-settings.wasm": "page-settings"
+  },
+  "toolchain": {
+    "producer": "example-build/1.0.0"
+  }
+}
+```
+
+`roots` are page/application roots. The selected `entrypoint` must be one of them. Roots become `role: "chunk"`; dependency-only nodes become `role: "module"`. The default entrypoint and its transitive dependencies are preparation candidates, while other page roots stay lazy. Cycles, duplicate edges or IDs, missing Wasm files, self-dependencies, and unreachable dependency sources are rejected.
+
+`asset_ids` is optional when a safe ID can be derived from the emitted path. Supplying it is recommended when the compiled Wasm ABI already names an import module: the dependency asset ID is also the default `ComposedWasmAdapter` import namespace. The producer records `rawWasmRoots`, `rawWasmAssetIds`, and `rawWasmImportNamespaces` under the existing `extensions` field as build evidence; these are not new contract authorities.
+
+For one immutable release containing several MPA roots, each HTML page selects its root explicitly:
+
+```js
+const rootAssetId = manifest.extensions.rawWasmRoots.settings;
+await coordinator.activate(key, new ComposedWasmAdapter({ rootAssetId }));
+```
+
+The release still uses `activation.mode: "run-app"`. Raw-Wasm `mount-route` is intentionally not invented downstream: changing that runtime semantic would require coordinated TypeSpec + independently authored JSON Schema/semantic-fixture/projection changes.
+
 ## Caching and compilation
 
-OWLS uses immutable `URL + SHA-256` asset identity. The same shared-library bytes can therefore be reused by multiple releases/pages without coupling their user chunks. Within one document, compiled `WebAssembly.Module` promises are also deduplicated by immutable asset identity. Across normal MPA navigation the byte cache is reusable, while each document creates fresh instances.
+OWLS uses immutable `URL + SHA-256` asset identity. The same shared-library bytes can therefore be reused by multiple pages without coupling their user chunks. Within one document, compiled `WebAssembly.Module` promises are also deduplicated by immutable asset identity. Across normal MPA navigation the byte cache is reusable, while each document creates fresh instances.
 
 This gives the desired network behavior:
 
@@ -105,6 +150,8 @@ navigation /settings
   vendor-core.7f.wasm -> verified Cache Storage hit
   GET page-settings.91.wasm
 ```
+
+A single immutable release is the simplest way to share one vendor URL across several MPA roots. If pages are emitted as separate releases, browser cache reuse requires the publisher to preserve the **exact same canonical vendor URL and SHA-256** across those releases. A release-scoped URL that changes on every release is a different asset identity even when its bytes happen to match.
 
 ## Relationship to Emscripten and wasm-split
 
