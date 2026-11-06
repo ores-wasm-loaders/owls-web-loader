@@ -1,0 +1,19 @@
+// Shared preparation lease reference. Does NOT drive AbortController.
+pub fnc must_cancel_after_release(int owners_before): bool {
+  if owners_before <= 0; then return false; fi
+  if owners_before == 1; then return true; fi
+  return false;
+}
+
+pub routine main(): void {
+  if !must_cancel_after_release(1); then
+    rt fail("final owner should permit cancellation");
+  fi
+  if must_cancel_after_release(2); then
+    rt fail("remaining peer must retain work");
+  fi
+  if must_cancel_after_release(3); then
+    rt fail("multiple peers retain work");
+  fi
+  return;
+}
