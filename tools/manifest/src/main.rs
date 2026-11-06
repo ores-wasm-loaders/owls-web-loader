@@ -179,14 +179,24 @@ fn validate_wasm_path(path: &str, paths: &[String], label: &str) -> Result<()> {
     }
     Ok(())
 }
-fn validate_split_path(path: &str, expected_wasm: &str, paths: &[String], label: &str) -> Result<()> {
+fn validate_split_path(
+    path: &str,
+    expected_wasm: &str,
+    paths: &[String],
+    label: &str,
+) -> Result<()> {
     validate_wasm_path(path, paths, label)?;
     if path == expected_wasm {
-        return Err(format!("{label} must name an actual emitted split Wasm file"));
+        return Err(format!(
+            "{label} must name an actual emitted split Wasm file"
+        ));
     }
     Ok(())
 }
-fn reachable_from(roots: &BTreeSet<String>, graph: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+fn reachable_from(
+    roots: &BTreeSet<String>,
+    graph: &BTreeMap<String, Vec<String>>,
+) -> BTreeSet<String> {
     fn visit(node: &str, graph: &BTreeMap<String, Vec<String>>, seen: &mut BTreeSet<String>) {
         if !seen.insert(node.to_string()) {
             return;
@@ -207,20 +217,30 @@ fn closure_from(root: &str, graph: &BTreeMap<String, Vec<String>>) -> BTreeSet<S
     let roots = BTreeSet::from([root.to_string()]);
     reachable_from(&roots, graph)
 }
-fn validate_edges(graph: &BTreeMap<String, Vec<String>>, paths: &[String], label: &str) -> Result<()> {
+fn validate_edges(
+    graph: &BTreeMap<String, Vec<String>>,
+    paths: &[String],
+    label: &str,
+) -> Result<()> {
     for (source, dependencies) in graph {
         validate_wasm_path(source, paths, &format!("{label} dependency source"))?;
         if dependencies.len() > 64 {
-            return Err(format!("{label} dependency source {source} exceeds 64 dependencies"));
+            return Err(format!(
+                "{label} dependency source {source} exceeds 64 dependencies"
+            ));
         }
         let mut unique = BTreeSet::new();
         for dependency in dependencies {
             validate_wasm_path(dependency, paths, &format!("{label} dependency target"))?;
             if dependency == source {
-                return Err(format!("{label} Wasm file {source} cannot depend on itself"));
+                return Err(format!(
+                    "{label} Wasm file {source} cannot depend on itself"
+                ));
             }
             if !unique.insert(dependency.clone()) {
-                return Err(format!("{label} Wasm file {source} repeats dependency {dependency}"));
+                return Err(format!(
+                    "{label} Wasm file {source} repeats dependency {dependency}"
+                ));
             }
         }
     }
@@ -251,7 +271,9 @@ fn raw_plan(recipe: &Recipe, paths: &[String]) -> Result<RawPlan> {
         }
         validate_wasm_path(path, paths, &format!("raw-Wasm root {name}"))?;
         if !root_paths.insert(path.clone()) {
-            return Err(format!("raw-Wasm root path is declared more than once: {path}"));
+            return Err(format!(
+                "raw-Wasm root path is declared more than once: {path}"
+            ));
         }
     }
     if !root_paths.contains(&recipe.entrypoint) {
@@ -261,7 +283,9 @@ fn raw_plan(recipe: &Recipe, paths: &[String]) -> Result<RawPlan> {
     let reachable = reachable_from(&root_paths, &recipe.dependencies);
     for source in recipe.dependencies.keys() {
         if !reachable.contains(source) {
-            return Err(format!("raw-Wasm dependency source {source} is not reachable from any root"));
+            return Err(format!(
+                "raw-Wasm dependency source {source} is not reachable from any root"
+            ));
         }
     }
     let mut graph_paths = reachable;
@@ -269,7 +293,9 @@ fn raw_plan(recipe: &Recipe, paths: &[String]) -> Result<RawPlan> {
 
     for path in recipe.asset_ids.keys() {
         if !graph_paths.contains(path) {
-            return Err(format!("raw-Wasm asset_ids entry {path} is not part of the reachable graph"));
+            return Err(format!(
+                "raw-Wasm asset_ids entry {path} is not part of the reachable graph"
+            ));
         }
     }
     let mut ids = BTreeMap::new();
@@ -319,7 +345,9 @@ fn build(recipe: &Recipe) -> Result<Value> {
             || !recipe.dependencies.is_empty()
             || !recipe.asset_ids.is_empty())
     {
-        return Err("Leptos build must declare islands and no routes/raw-Wasm graph metadata".into());
+        return Err(
+            "Leptos build must declare islands and no routes/raw-Wasm graph metadata".into(),
+        );
     }
     if framework == "dioxus"
         && (!recipe.islands.is_empty()
@@ -353,7 +381,11 @@ fn build(recipe: &Recipe) -> Result<Value> {
     {
         return Err("canonical credentialless HTTPS base required".into());
     }
-    if !base.path().split('/').any(|segment| segment == recipe.release) {
+    if !base
+        .path()
+        .split('/')
+        .any(|segment| segment == recipe.release)
+    {
         return Err("release must be an immutable path segment".into());
     }
     if fs::symlink_metadata(&recipe.root)
@@ -404,16 +436,22 @@ fn build(recipe: &Recipe) -> Result<Value> {
         for (source, dependencies) in &recipe.dependencies {
             validate_split_path(source, expected, &paths, "Dioxus dependency source")?;
             if dependencies.len() > 64 {
-                return Err(format!("Dioxus dependency source {source} exceeds 64 dependencies"));
+                return Err(format!(
+                    "Dioxus dependency source {source} exceeds 64 dependencies"
+                ));
             }
             let mut unique = BTreeSet::new();
             for dependency in dependencies {
                 validate_split_path(dependency, expected, &paths, "Dioxus dependency target")?;
                 if dependency == source {
-                    return Err(format!("Dioxus split file {source} cannot depend on itself"));
+                    return Err(format!(
+                        "Dioxus split file {source} cannot depend on itself"
+                    ));
                 }
                 if !unique.insert(dependency.clone()) {
-                    return Err(format!("Dioxus split file {source} repeats dependency {dependency}"));
+                    return Err(format!(
+                        "Dioxus split file {source} repeats dependency {dependency}"
+                    ));
                 }
                 split_paths.insert(dependency.clone());
             }
@@ -423,7 +461,9 @@ fn build(recipe: &Recipe) -> Result<Value> {
         let reachable = reachable_from(&route_roots, &recipe.dependencies);
         for source in recipe.dependencies.keys() {
             if !reachable.contains(source) {
-                return Err(format!("Dioxus dependency source {source} is not reachable from any declared route"));
+                return Err(format!(
+                    "Dioxus dependency source {source} is not reachable from any declared route"
+                ));
             }
         }
         split_ids = split_paths
@@ -454,7 +494,11 @@ fn build(recipe: &Recipe) -> Result<Value> {
                 let prepare = plan.default_closure.contains(path);
                 (
                     plan.ids[path].clone(),
-                    if plan.root_paths.contains(path) { "chunk" } else { "module" },
+                    if plan.root_paths.contains(path) {
+                        "chunk"
+                    } else {
+                        "module"
+                    },
                     "wasm",
                     prepare,
                     if prepare { "optional" } else { "lazy" },
@@ -463,14 +507,33 @@ fn build(recipe: &Recipe) -> Result<Value> {
                 (
                     format!("asset-{index}"),
                     "asset",
-                    if path.ends_with(".wasm") { "wasm" } else if path.ends_with(".mjs") { "module" } else if path.ends_with(".js") { "script" } else if [".ttf", ".otf", ".woff", ".woff2"].iter().any(|ext| path.ends_with(ext)) { "font" } else { "data" },
+                    if path.ends_with(".wasm") {
+                        "wasm"
+                    } else if path.ends_with(".mjs") {
+                        "module"
+                    } else if path.ends_with(".js") {
+                        "script"
+                    } else if [".ttf", ".otf", ".woff", ".woff2"]
+                        .iter()
+                        .any(|ext| path.ends_with(ext))
+                    {
+                        "font"
+                    } else {
+                        "data"
+                    },
                     false,
                     "lazy",
                 )
             }
         } else if *path == recipe.entrypoint {
             if recipe.runtime == "flutter-web" {
-                ("bootstrap".to_string(), "bootstrap", "script", true, "optional")
+                (
+                    "bootstrap".to_string(),
+                    "bootstrap",
+                    "script",
+                    true,
+                    "optional",
+                )
             } else {
                 ("glue".to_string(), "glue", "module", true, "optional")
             }
@@ -484,7 +547,20 @@ fn build(recipe: &Recipe) -> Result<Value> {
             (
                 format!("asset-{index}"),
                 "asset",
-                if path.ends_with(".wasm") { "wasm" } else if path.ends_with(".mjs") { "module" } else if path.ends_with(".js") { "script" } else if [".ttf", ".otf", ".woff", ".woff2"].iter().any(|ext| path.ends_with(ext)) { "font" } else { "data" },
+                if path.ends_with(".wasm") {
+                    "wasm"
+                } else if path.ends_with(".mjs") {
+                    "module"
+                } else if path.ends_with(".js") {
+                    "script"
+                } else if [".ttf", ".otf", ".woff", ".woff2"]
+                    .iter()
+                    .any(|ext| path.ends_with(ext))
+                {
+                    "font"
+                } else {
+                    "data"
+                },
                 false,
                 "lazy",
             )
@@ -506,9 +582,15 @@ fn build(recipe: &Recipe) -> Result<Value> {
         if let Some(dependencies) = recipe.dependencies.get(path) {
             if !dependencies.is_empty() {
                 let ids = if let Some(plan) = &raw {
-                    dependencies.iter().map(|dependency| plan.ids[dependency].clone()).collect::<Vec<_>>()
+                    dependencies
+                        .iter()
+                        .map(|dependency| plan.ids[dependency].clone())
+                        .collect::<Vec<_>>()
                 } else {
-                    dependencies.iter().map(|dependency| split_ids[dependency].clone()).collect::<Vec<_>>()
+                    dependencies
+                        .iter()
+                        .map(|dependency| split_ids[dependency].clone())
+                        .collect::<Vec<_>>()
                 };
                 asset["dependencies"] = json!(ids);
             }
@@ -542,16 +624,28 @@ fn build(recipe: &Recipe) -> Result<Value> {
             }),
         )
     } else if framework == "flutter" {
-        ("bootstrap".to_string(), json!({"mode": "attach-view"}), json!({}))
+        (
+            "bootstrap".to_string(),
+            json!({"mode": "attach-view"}),
+            json!({}),
+        )
     } else if framework == "dioxus" {
         let routes: Map<String, Value> = recipe
             .routes
             .iter()
             .map(|(route, path)| (route.clone(), json!(split_ids[path])))
             .collect();
-        ("glue".to_string(), json!({"mode": "mount-route", "routes": routes}), json!({}))
+        (
+            "glue".to_string(),
+            json!({"mode": "mount-route", "routes": routes}),
+            json!({}),
+        )
     } else {
-        ("glue".to_string(), json!({"mode": "hydrate-islands", "islands": recipe.islands}), json!({}))
+        (
+            "glue".to_string(),
+            json!({"mode": "hydrate-islands", "islands": recipe.islands}),
+            json!({}),
+        )
     };
 
     let mut extensions = json!({
@@ -652,13 +746,30 @@ mod tests {
 
     #[test]
     fn paths_reject_secret_and_traversal_candidates() {
-        for s in [".env", "../main.js", "dir/.env", "/main.js", "x//y", "x?token", "x#y", "a b"] {
+        for s in [
+            ".env",
+            "../main.js",
+            "dir/.env",
+            "/main.js",
+            "x//y",
+            "x?token",
+            "x#y",
+            "a b",
+        ] {
             assert!(!safe_path(s), "{s}");
         }
     }
     #[test]
     fn route_keys_are_bounded_and_navigation_safe() {
-        for s in ["", "app", "/a?token=x", "/a#frag", "/../admin", "/a/../b", "/a b"] {
+        for s in [
+            "",
+            "app",
+            "/a?token=x",
+            "/a#frag",
+            "/../admin",
+            "/a/../b",
+            "/a b",
+        ] {
             assert!(!route_key(s), "{s}");
         }
         assert!(route_key("/app/reports"));
@@ -685,7 +796,12 @@ mod tests {
     }
     #[test]
     fn rejects_unversioned_and_insecure_origins_before_io() {
-        for base in ["http://example.test/r1/", "https://example.test/latest/", "https://user@example.test/r1/", "https://example.test/r1/?token=x"] {
+        for base in [
+            "http://example.test/r1/",
+            "https://example.test/latest/",
+            "https://user@example.test/r1/",
+            "https://example.test/r1/?token=x",
+        ] {
             let mut r = recipe("/not-present".into(), "flutter-web", "flutter_bootstrap.js");
             r.base_url = base.into();
             assert!(build(&r).is_err());
@@ -717,13 +833,22 @@ mod tests {
         write_wasm(root.join("split/module_0_routeReports.wasm"));
         let mut r = recipe(root.clone(), "wasm-bindgen", "app.js");
         r.framework = Some("dioxus".into());
-        r.routes.insert("/reports".into(), "split/module_0_routeReports.wasm".into());
-        r.dependencies.insert("split/module_0_routeReports.wasm".into(), vec!["split/chunk_0_split.wasm".into()]);
+        r.routes
+            .insert("/reports".into(), "split/module_0_routeReports.wasm".into());
+        r.dependencies.insert(
+            "split/module_0_routeReports.wasm".into(),
+            vec!["split/chunk_0_split.wasm".into()],
+        );
         let result = build(&r).unwrap();
         assert_eq!(result["framework"], "dioxus");
         assert_eq!(result["activation"]["mode"], "mount-route");
         let route_id = result["activation"]["routes"]["/reports"].as_str().unwrap();
-        let route_asset = result["assets"].as_array().unwrap().iter().find(|asset| asset["id"] == route_id).unwrap();
+        let route_asset = result["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|asset| asset["id"] == route_id)
+            .unwrap();
         assert_eq!(route_asset["role"], "chunk");
         assert_eq!(route_asset["dependencies"].as_array().unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
@@ -738,19 +863,28 @@ mod tests {
         }
         let mut r = recipe(root.clone(), "raw-wasm", "page-home.wasm");
         r.roots.insert("home".into(), "page-home.wasm".into());
-        r.roots.insert("settings".into(), "page-settings.wasm".into());
-        r.dependencies.insert("page-home.wasm".into(), vec!["vendor-core.wasm".into()]);
-        r.dependencies.insert("page-settings.wasm".into(), vec!["vendor-core.wasm".into()]);
-        r.asset_ids.insert("vendor-core.wasm".into(), "vendor-core".into());
-        r.asset_ids.insert("page-home.wasm".into(), "page-home".into());
-        r.asset_ids.insert("page-settings.wasm".into(), "page-settings".into());
+        r.roots
+            .insert("settings".into(), "page-settings.wasm".into());
+        r.dependencies
+            .insert("page-home.wasm".into(), vec!["vendor-core.wasm".into()]);
+        r.dependencies
+            .insert("page-settings.wasm".into(), vec!["vendor-core.wasm".into()]);
+        r.asset_ids
+            .insert("vendor-core.wasm".into(), "vendor-core".into());
+        r.asset_ids
+            .insert("page-home.wasm".into(), "page-home".into());
+        r.asset_ids
+            .insert("page-settings.wasm".into(), "page-settings".into());
         let result = build(&r).unwrap();
         assert_eq!(result["runtime"], "raw-wasm");
         assert_eq!(result["framework"], "none");
         assert_eq!(result["entrypoint"], "page-home");
         assert_eq!(result["activation"]["mode"], "run-app");
         assert_eq!(result["extensions"]["rawWasmRoots"]["home"], "page-home");
-        assert_eq!(result["extensions"]["rawWasmRoots"]["settings"], "page-settings");
+        assert_eq!(
+            result["extensions"]["rawWasmRoots"]["settings"],
+            "page-settings"
+        );
         let assets = result["assets"].as_array().unwrap();
         let vendor = assets.iter().find(|a| a["id"] == "vendor-core").unwrap();
         let home = assets.iter().find(|a| a["id"] == "page-home").unwrap();
@@ -775,26 +909,46 @@ mod tests {
         }
         let mut cycle = recipe(root.clone(), "raw-wasm", "a.wasm");
         cycle.roots.insert("a".into(), "a.wasm".into());
-        cycle.dependencies.insert("a.wasm".into(), vec!["b.wasm".into()]);
-        cycle.dependencies.insert("b.wasm".into(), vec!["a.wasm".into()]);
+        cycle
+            .dependencies
+            .insert("a.wasm".into(), vec!["b.wasm".into()]);
+        cycle
+            .dependencies
+            .insert("b.wasm".into(), vec!["a.wasm".into()]);
         assert!(build(&cycle).unwrap_err().contains("dependency cycle"));
 
         let mut missing = recipe(root.clone(), "raw-wasm", "a.wasm");
         missing.roots.insert("a".into(), "a.wasm".into());
-        missing.dependencies.insert("a.wasm".into(), vec!["missing.wasm".into()]);
-        assert!(build(&missing).unwrap_err().contains("actual emitted Wasm file"));
+        missing
+            .dependencies
+            .insert("a.wasm".into(), vec!["missing.wasm".into()]);
+        assert!(build(&missing)
+            .unwrap_err()
+            .contains("actual emitted Wasm file"));
 
         let mut unreachable = recipe(root.clone(), "raw-wasm", "a.wasm");
         unreachable.roots.insert("a".into(), "a.wasm".into());
-        unreachable.dependencies.insert("c.wasm".into(), vec!["b.wasm".into()]);
-        assert!(build(&unreachable).unwrap_err().contains("not reachable from any root"));
+        unreachable
+            .dependencies
+            .insert("c.wasm".into(), vec!["b.wasm".into()]);
+        assert!(build(&unreachable)
+            .unwrap_err()
+            .contains("not reachable from any root"));
 
         let mut duplicate_id = recipe(root.clone(), "raw-wasm", "a.wasm");
         duplicate_id.roots.insert("a".into(), "a.wasm".into());
-        duplicate_id.dependencies.insert("a.wasm".into(), vec!["b.wasm".into()]);
-        duplicate_id.asset_ids.insert("a.wasm".into(), "same".into());
-        duplicate_id.asset_ids.insert("b.wasm".into(), "same".into());
-        assert!(build(&duplicate_id).unwrap_err().contains("duplicate asset id"));
+        duplicate_id
+            .dependencies
+            .insert("a.wasm".into(), vec!["b.wasm".into()]);
+        duplicate_id
+            .asset_ids
+            .insert("a.wasm".into(), "same".into());
+        duplicate_id
+            .asset_ids
+            .insert("b.wasm".into(), "same".into());
+        assert!(build(&duplicate_id)
+            .unwrap_err()
+            .contains("duplicate asset id"));
         fs::remove_dir_all(root).unwrap();
     }
 }
