@@ -38,6 +38,28 @@ jobs:
             printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
           } > evidence/DEN-813/checkout-provenance.txt
           cat evidence/DEN-813/checkout-provenance.txt
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Bind evidence to immutable source head and Git tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD" || {
+            echo "Refused synthetic PR merge commit or mismatched source" >&2; exit 78;
+          }
+          mkdir -p evidence/DEN-813
+          {
+            printf 'source_head=%s\n' "$EXPECTED_HEAD"
+            printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'source_branch=%s\n' "$GITHUB_HEAD_REF"
+            printf 'workflow_sha=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+          } > evidence/DEN-813/checkout-provenance.txt
+          cat evidence/DEN-813/checkout-provenance.txt
       - name: Check out the admitted browser-safe contract and runtime export
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -83,6 +105,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Bind evidence to immutable source head and Git tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD" || {
+            echo "Refused synthetic PR merge commit or mismatched source" >&2; exit 78;
+          }
+          mkdir -p evidence/DEN-813
+          {
+            printf 'source_head=%s\n' "$EXPECTED_HEAD"
+            printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'source_branch=%s\n' "$GITHUB_HEAD_REF"
+            printf 'workflow_sha=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+          } > evidence/DEN-813/checkout-provenance.txt
+          cat evidence/DEN-813/checkout-provenance.txt
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 1
       - name: Bind evidence to immutable source head and Git tree
