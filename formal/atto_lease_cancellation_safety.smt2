@@ -26,3 +26,8 @@
 (assert (> owners_after 0))
 (check-sat)
 (pop 1)
+; Non-vacuity: at least one well-formed bounded lease transition exists.
+(push 1)
+(assert valid_transition)
+(check-sat)
+(pop 1)
