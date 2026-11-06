@@ -33,7 +33,7 @@ jobs:
           mkdir -p evidence
           test "$(git -C owls-interfaces rev-parse HEAD)" = "$OWLS_INTERFACES_REF"
           { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
-          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock .ores-wasm.toml src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/config.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
+          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock .ores-wasm.toml src test fixtures docs scripts/DEN-813-lease-real-mutants.sh LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/config.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
           sha256sum evidence/source.tar.gz > evidence/source.sha256
       - name: Run all combined regressions and contract tests
         shell: bash
@@ -41,6 +41,11 @@ jobs:
           set -euo pipefail
           node --test --test-reporter=tap test/*.test.mjs | tee evidence/loader.tap
           node --test --test-reporter=tap owls-interfaces/test/*.test.mjs | tee evidence/contract.tap
+      - name: Require real coordinator ownership mutation witnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/DEN-813-lease-real-mutants.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
