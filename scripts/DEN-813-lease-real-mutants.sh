@@ -27,7 +27,17 @@ kill_mutant() {
   local count
   count="$(grep -F -c "$old" "$src" || true)"
   [[ "$count" == 1 ]] || { echo "No unique guarded production expression for $name ($count)" >&2; return 1; }
-  sed -i "s|$old|$new|" "$src"
+  # Plain sed replacement treats '&' as the whole matched expression.
+  # Use Node's literal string replacement so a valid source mutant stays
+  # syntactically valid and only a named failing test can count as evidence.
+  DEN813_OLD="$old" DEN813_NEW="$new" DEN813_SOURCE="$src" \
+    node --input-type=module -e '
+      import { readFileSync, writeFileSync } from "node:fs";
+      const { DEN813_OLD, DEN813_NEW, DEN813_SOURCE } = process.env;
+      const source = readFileSync(DEN813_SOURCE, "utf8");
+      if (source.split(DEN813_OLD).length !== 2) process.exit(78);
+      writeFileSync(DEN813_SOURCE, source.replace(DEN813_OLD, DEN813_NEW));
+    '
   ! cmp -s "$src" "$root/src/coordinator.mjs" || { echo "$name left code identical" >&2; return 1; }
   local log="$root/evidence/DEN-813/$name.tap"
   if (cd "$work/case" && node --test \
