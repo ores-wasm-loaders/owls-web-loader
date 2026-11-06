@@ -1,0 +1,38 @@
+name: DEN-813 shared preparation lease safety symbolic model
+on:
+  pull_request:
+    paths:
+      - "formal/atto_lease_cancellation_safety.smt2"
+      - "examples/atto/lease_cancellation.atto"
+      - ".github/workflows/DEN-813-lease-cancellation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "formal/atto_lease_cancellation_safety.smt2"
+      - "examples/atto/lease_cancellation.atto"
+      - ".github/workflows/DEN-813-lease-cancellation.yml"
+permissions:
+  contents: read
+jobs:
+  smt_model_only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Z3 reference solver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          z3 -version
+      - name: Prove safety and catch deliberate missing-guard mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(z3 -smt2 formal/atto_lease_cancellation_safety.smt2)"
+          expected="$(printf 'unsat\nsat')"
+          if [ "$actual" != "$expected" ]; then
+            printf 'Unexpected proof/mutation response: %s\n' "$actual" >&2
+            exit 1
+          fi
+          test -s examples/atto/lease_cancellation.atto
+          echo "SMT_REFERENCE=PASS; ATTO_GUEST_EXECUTION=NOT_EXECUTED"
