@@ -32,7 +32,7 @@ jobs:
           {
             printf 'source_head=%s\n' "$EXPECTED_HEAD"
             printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
-            printf 'source_branch=%s\n' "$GITHUB_HEAD_REF"
+            printf 'source_branch=%s\n' "${GITHUB_HEAD_REF:-$GITHUB_REF}"
             printf 'workflow_sha=%s\n' "$GITHUB_SHA"
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
@@ -99,7 +99,7 @@ jobs:
           {
             printf 'source_head=%s\n' "$EXPECTED_HEAD"
             printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
-            printf 'source_branch=%s\n' "$GITHUB_HEAD_REF"
+            printf 'source_branch=%s\n' "${GITHUB_HEAD_REF:-$GITHUB_REF}"
             printf 'workflow_sha=%s\n' "$GITHUB_SHA"
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
