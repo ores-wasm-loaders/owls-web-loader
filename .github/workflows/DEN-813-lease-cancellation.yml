@@ -19,6 +19,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prove immutable SMT source checkout identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE" || exit 78
+          echo "MODEL_SOURCE_HEAD=$EXPECTED_SOURCE"
+          echo "MODEL_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          echo "MODEL_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
       - name: Install Z3 reference solver
         run: |
           sudo apt-get update
