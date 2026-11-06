@@ -39,6 +39,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y z3
           z3 -version
+          # Audited Ubuntu 24.04 Z3 baseline. Fail closed on solver drift:
+          # model-only results are not evidence for compiler/guest parity.
+          solver_version="$(z3 -version)"
+          test "$solver_version" = 'Z3 version 4.8.12 - 64 bit' || {
+            echo "Z3 drift requires independent formal-model revalidation: $solver_version" >&2
+            exit 78
+          }
+          sha256sum "$(command -v z3)"
       - name: Prove safety and catch deliberate missing-guard mutation
         shell: bash
         run: |
