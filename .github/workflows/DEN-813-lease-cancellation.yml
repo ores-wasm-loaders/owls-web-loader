@@ -1,0 +1,61 @@
+name: DEN-813 shared preparation lease safety symbolic model
+on:
+  pull_request:
+    paths:
+      - "formal/atto_lease_cancellation_safety.smt2"
+      - "examples/atto/lease_cancellation.atto"
+      - ".github/workflows/DEN-813-lease-cancellation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "formal/atto_lease_cancellation_safety.smt2"
+      - "examples/atto/lease_cancellation.atto"
+      - ".github/workflows/DEN-813-lease-cancellation.yml"
+permissions:
+  contents: read
+jobs:
+  smt_model_only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prove immutable SMT source checkout identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE" || exit 78
+          echo "MODEL_SOURCE_HEAD=$EXPECTED_SOURCE"
+          echo "MODEL_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          echo "MODEL_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+      - name: Install Z3 reference solver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          z3 -version
+          # Audited Ubuntu 24.04 Z3 baseline. Fail closed on solver drift:
+          # model-only results are not evidence for compiler/guest parity.
+          solver_version="$(z3 -version)"
+          test "$solver_version" = 'Z3 version 4.8.12 - 64 bit' || {
+            echo "Z3 drift requires independent formal-model revalidation: $solver_version" >&2
+            exit 78
+          }
+          sha256sum "$(command -v z3)"
+      - name: Prove safety and catch deliberate missing-guard mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(z3 -smt2 formal/atto_lease_cancellation_safety.smt2)"
+          expected="$(printf 'unsat\nsat')"
+          if [ "$actual" != "$expected" ]; then
+            printf 'Unexpected proof/mutation response: %s\n' "$actual" >&2
+            exit 1
+          fi
+          test -s examples/atto/lease_cancellation.atto
+          echo "SMT_REFERENCE=PASS; ATTO_GUEST_EXECUTION=NOT_EXECUTED"

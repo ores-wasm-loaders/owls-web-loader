@@ -16,6 +16,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Bind evidence to immutable source head and Git tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD" || {
+            echo "Refused synthetic PR merge commit or mismatched source" >&2; exit 78;
+          }
+          mkdir -p evidence/DEN-813
+          {
+            printf 'source_head=%s\n' "$EXPECTED_HEAD"
+            printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'source_branch=%s\n' "${GITHUB_HEAD_REF:-$GITHUB_REF}"
+            printf 'workflow_sha=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+          } > evidence/DEN-813/checkout-provenance.txt
+          cat evidence/DEN-813/checkout-provenance.txt
       - name: Check out the admitted browser-safe contract and runtime export
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -33,7 +55,7 @@ jobs:
           mkdir -p evidence
           test "$(git -C owls-interfaces rev-parse HEAD)" = "$OWLS_INTERFACES_REF"
           { git rev-parse HEAD; git -C owls-interfaces rev-parse HEAD; node --version; } > evidence/versions.txt
-          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock .ores-wasm.toml src test fixtures docs LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/config.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
+          tar -czf evidence/source.tar.gz index.mjs package.json .zpkg.toml .zpkg.lock .ores-wasm.toml src test fixtures docs scripts/DEN-813-lease-real-mutants.sh LICENSE owls-interfaces/index.mjs owls-interfaces/package.json owls-interfaces/release.mjs owls-interfaces/config.mjs owls-interfaces/validate.mjs owls-interfaces/schemas owls-interfaces/fixtures owls-interfaces/contracts owls-interfaces/test owls-interfaces/typescript owls-interfaces/LICENSE
           sha256sum evidence/source.tar.gz > evidence/source.sha256
       - name: Run all combined regressions and contract tests
         shell: bash
@@ -41,10 +63,15 @@ jobs:
           set -euo pipefail
           node --test --test-reporter=tap test/*.test.mjs | tee evidence/loader.tap
           node --test --test-reporter=tap owls-interfaces/test/*.test.mjs | tee evidence/contract.tap
+      - name: Require real coordinator ownership mutation witnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/DEN-813-lease-real-mutants.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: loader-conformance-${{ github.sha }}
+          name: loader-conformance-${{ github.event.pull_request.head.sha || github.sha }}
           path: evidence/
           retention-days: 30
           if-no-files-found: error
@@ -56,6 +83,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Bind evidence to immutable source head and Git tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 78
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD" || {
+            echo "Refused synthetic PR merge commit or mismatched source" >&2; exit 78;
+          }
+          mkdir -p evidence/DEN-813
+          {
+            printf 'source_head=%s\n' "$EXPECTED_HEAD"
+            printf 'source_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'source_branch=%s\n' "${GITHUB_HEAD_REF:-$GITHUB_REF}"
+            printf 'workflow_sha=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+          } > evidence/DEN-813/checkout-provenance.txt
+          cat evidence/DEN-813/checkout-provenance.txt
       - name: Check out the exact admitted release authority
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -151,7 +200,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: manifest-producer-${{ github.sha }}
+          name: manifest-producer-${{ github.event.pull_request.head.sha || github.sha }}
           path: manifest-evidence/
           retention-days: 30
           if-no-files-found: error
