@@ -9,10 +9,10 @@ const ORIGIN = 'https://leases.ores-wasm-loaders.test';
 const BYTES = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 const KEY = 'lease-refinement@v1';
 
-function setup(transport) {
+function setup(transport, { report = () => {} } = {}) {
   const coordinator = new Coordinator(
     browserPolicy([ORIGIN], { timeoutMs: 2_000 }),
-    { transport, store: new MemoryStore() },
+    { transport, store: new MemoryStore(), report },
   );
   coordinator.register({
     schemaVersion: 2,
@@ -94,4 +94,26 @@ test('final owner aborts unclaimed fetch and next attempt is a fresh generation'
   assert.deepEqual(outcome.prepared, ['module']);
   assert.equal(attempts, 2);
   assert.equal(coordinator.receiptFor(KEY)?.status, 'warmed');
+});
+
+test('three concurrent leases emit exactly one preparation-start event', async () => {
+  const events = [];
+  let finish;
+  let signalStart;
+  const started = new Promise((resolve) => { signalStart = resolve; });
+  const coordinator = setup(() => new Promise((resolve) => {
+    finish = () => resolve(BYTES);
+    signalStart();
+  }), { report: (event) => events.push(event) });
+
+  const leases = [coordinator.prepare(KEY), coordinator.prepare(KEY), coordinator.prepare(KEY)];
+  await started;
+  // A low-level fetch cache can hide duplicate preparation jobs. The
+  // prepare-start generation event is the independent observable witness.
+  const admittedJobs = events.filter((event) => event.phase === 'prepare-start').length;
+  finish();
+  const outcomes = await Promise.all(leases.map((lease) => lease.promise));
+  leases.forEach((lease) => lease.release());
+  for (const outcome of outcomes) assert.equal(outcome.status, 'warmed');
+  assert.equal(admittedJobs, 1, 'all concurrent leases must join one preparation job');
 });
