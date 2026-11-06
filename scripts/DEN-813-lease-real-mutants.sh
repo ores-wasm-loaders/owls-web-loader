@@ -11,7 +11,7 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/case/test" "$root/evidence/DEN-813"
 cp -R "$root/src" "$work/case/src"
 cp "$root/index.mjs" "$root/package.json" "$work/case/"
-cp "$root/test/lifecycle-hardening.test.mjs" "$work/case/test/"
+cp "$root/test/lifecycle-hardening.test.mjs" "$root/test/atto-lease-refinement.test.mjs" "$work/case/test/"
 # Shared contract checkout remains inside the same trusted job; no source
 # leaves the originating organization and nothing is shipped via this symlink.
 ln -s "$root/owls-interfaces" "$work/case/owls-interfaces"
@@ -21,7 +21,7 @@ printf 'head=%s\ntree=%s\noriginal_coordinator_sha256=%s\n' \
   "$baseline" > "$root/evidence/DEN-813/mutation-provenance.txt"
 
 kill_mutant() {
-  local name="$1" old="$2" new="$3"
+  local name="$1" old="$2" new="$3" test_file="$4" test_name="$5"
   local src="$work/case/src/coordinator.mjs"
   cp "$root/src/coordinator.mjs" "$src"
   local count
@@ -41,12 +41,11 @@ kill_mutant() {
   ! cmp -s "$src" "$root/src/coordinator.mjs" || { echo "$name left code identical" >&2; return 1; }
   local log="$root/evidence/DEN-813/$name.tap"
   if (cd "$work/case" && node --test \
-       --test-name-pattern='preparation leases share one job and one release cannot cancel another' \
-       test/lifecycle-hardening.test.mjs) > "$log" 2>&1; then
+       --test-name-pattern="$test_name" "$test_file") > "$log" 2>&1; then
     echo "Real lease test did not kill $name" >&2; return 1;
   fi
   # Require an actual identified failing test. Import/parse failures do not count.
-  grep -Fq 'not ok 1 - preparation leases share one job and one release cannot cancel another' "$log" || {
+  grep -Eq "^not ok [0-9]+ - $test_name$" "$log" || {
     echo "$name did not run the expected failing Node test" >&2; cat "$log" >&2; return 1;
   }
   grep -Eq '^# fail [1-9]' "$log" || return 1
@@ -56,10 +55,14 @@ kill_mutant() {
 }
 
 kill_mutant cancelled_while_another_owner_exists \
-  'job.leases.size === 0' 'job.leases.size >= 0'
+  'job.leases.size === 0' 'job.leases.size >= 0' \
+  'test/lifecycle-hardening.test.mjs' \
+  'preparation leases share one job and one release cannot cancel another'
 kill_mutant disabled_shared_job_reuse \
   'pending && !pending.controller.signal.aborted' \
-  'pending && pending.controller.signal.aborted'
+  'pending && pending.controller.signal.aborted' \
+  'test/atto-lease-refinement.test.mjs' \
+  'three concurrent leases emit exactly one preparation-start event'
 
 test "$baseline" = "$(sha256sum "$root/src/coordinator.mjs" | cut -d' ' -f1)"
 printf '%s\n' 'MUTATION_CLASS=PRODUCTION_NODE_MODULE' \
